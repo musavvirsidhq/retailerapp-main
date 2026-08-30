@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #1B2733;
+  --color-ink-soft: #3D4B59;
+  --color-paper: #F5F4F0;
+  --color-line: #E3E1D9;
+  --color-amber: #C87F1F;
+  --color-amber-soft: #F4E3C8;
+  --color-green: #2F7A4D;
+  --color-green-soft: #E1F0E5;
+  --color-red: #B23A34;
+  --color-red-soft: #F6E2E0;
+  --color-slate: #6B7280;
+
+  --font-display: "Space Grotesk", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+}
+
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+}
+
+.mono-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@layer components {
+  .card {
+    @apply bg-white border border-line rounded-lg shadow-sm;
+  }
+  .card-header {
+    @apply px-5 py-4 border-b border-line flex items-center justify-between;
+  }
+  .eyebrow {
+    @apply font-mono text-[11px] uppercase tracking-widest text-slate;
+  }
+  .input-field {
+    @apply border border-line rounded-md px-3 py-2 bg-white text-sm outline-none transition-colors focus:border-amber focus:ring-2 focus:ring-amber-soft;
+  }
+  .btn-primary {
+    @apply bg-ink text-white px-4 py-2 rounded-md font-medium text-sm hover:bg-ink-soft transition-colors disabled:opacity-50;
+  }
+  .btn-accent {
+    @apply bg-amber text-white px-5 py-2 rounded-md font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply text-slate hover:text-ink text-sm transition-colors;
+  }
+  .table-base {
+    @apply w-full text-left text-sm;
+  }
+  .table-base thead {
+    @apply bg-paper text-slate text-xs uppercase tracking-wide font-mono;
+  }
+  .table-base th {
+    @apply px-4 py-2.5 font-medium;
+  }
+  .table-base td {
+    @apply px-4 py-2.5 border-t border-line;
+  }
+  .stamp {
+    @apply inline-flex items-center font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-sm border font-semibold;
+  }
+  .stamp-green {
+    @apply inline-flex items-center font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-sm border font-semibold text-green border-green bg-green-soft;
+  }
+  .stamp-red {
+    @apply inline-flex items-center font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-sm border font-semibold text-red border-red bg-red-soft;
+  }
+  .stamp-amber {
+    @apply inline-flex items-center font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-sm border font-semibold text-amber border-amber bg-amber-soft;
+  }
+  .stamp-slate {
+    @apply inline-flex items-center font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-sm border font-semibold text-slate border-line bg-white;
+  }
+}

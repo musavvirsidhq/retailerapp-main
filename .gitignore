@@ -1,0 +1,19 @@
+# Go
+*.exe
+*.test
+*.out
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Env/secrets
+.env
+*.env
+
+# Test/session artifacts
+cookies.txt
+
+# OS/editor junk
+.DS_Store
+*.swp
