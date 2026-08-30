@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:8080/api/auth"
+const API_BASE = "/api/auth"
 
 export interface User {
   id: number

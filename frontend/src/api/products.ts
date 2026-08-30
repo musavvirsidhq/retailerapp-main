@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:8080/api/products"
+const API_BASE = "/api/products"
 
 export interface Product {
   ID: number
