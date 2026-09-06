@@ -6,8 +6,10 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Sivanandha02/retailapp/internal/db"
+	appMiddleware "github.com/Sivanandha02/retailapp/internal/middleware"
 )
 
 type PaymentHandler struct {
@@ -27,7 +29,8 @@ type paymentInput struct {
 }
 
 func (h *PaymentHandler) List(w http.ResponseWriter, r *http.Request) {
-	payments, err := h.Queries.ListPayments(r.Context())
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
+	payments, err := h.Queries.ListPayments(r.Context(), companyID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -39,6 +42,8 @@ func (h *PaymentHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PaymentHandler) Create(w http.ResponseWriter, r *http.Request) {
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
+	userID, _ := appMiddleware.UserIDFromContext(r.Context())
 	var in paymentInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -50,11 +55,13 @@ func (h *PaymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payment, err := h.Queries.CreatePayment(r.Context(), db.CreatePaymentParams{
+		CompanyID:   companyID,
 		PartyType:   in.PartyType,
 		PartyID:     in.PartyID,
 		Amount:      numericFromFloat(in.Amount),
 		PaymentMode: in.PaymentMode,
 		Notes:       pgTextOrNil(in.Notes),
+		CreatedBy:   pgtype.Int4{Int32: userID, Valid: true},
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -65,12 +72,13 @@ func (h *PaymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PaymentHandler) ShopBalance(w http.ResponseWriter, r *http.Request) {
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	balance, err := h.Queries.ShopBalance(r.Context(), int32(id))
+	balance, err := h.Queries.ShopBalance(r.Context(), db.ShopBalanceParams{ID: int32(id), CompanyID: companyID})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -79,12 +87,13 @@ func (h *PaymentHandler) ShopBalance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PaymentHandler) FactoryBalance(w http.ResponseWriter, r *http.Request) {
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	balance, err := h.Queries.FactoryBalance(r.Context(), int32(id))
+	balance, err := h.Queries.FactoryBalance(r.Context(), db.FactoryBalanceParams{FactoryID: int32(id), CompanyID: companyID})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

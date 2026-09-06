@@ -12,39 +12,80 @@ import (
 )
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (name, username, password_hash, role)
-VALUES ($1, $2, $3, $4)
-RETURNING id, name, username, password_hash, role, created_at
+INSERT INTO users (company_id, name, username, password_hash, user_type, purchase_access, sales_access, sales_below_cost_approve)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, company_id, name, username, password_hash, user_type, purchase_access, sales_access, sales_below_cost_approve, status, created_at
 `
 
 type CreateUserParams struct {
-	Name         string
-	Username     string
-	PasswordHash string
-	Role         string
+	CompanyID             pgtype.Int4
+	Name                  string
+	Username              string
+	PasswordHash          string
+	UserType              string
+	PurchaseAccess        bool
+	SalesAccess           bool
+	SalesBelowCostApprove bool
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, createUser,
+		arg.CompanyID,
 		arg.Name,
 		arg.Username,
 		arg.PasswordHash,
-		arg.Role,
+		arg.UserType,
+		arg.PurchaseAccess,
+		arg.SalesAccess,
+		arg.SalesBelowCostApprove,
 	)
 	var i User
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.Username,
 		&i.PasswordHash,
-		&i.Role,
+		&i.UserType,
+		&i.PurchaseAccess,
+		&i.SalesAccess,
+		&i.SalesBelowCostApprove,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCompanyUser = `-- name: GetCompanyUser :one
+SELECT id, company_id, name, username, password_hash, user_type, purchase_access, sales_access, sales_below_cost_approve, status, created_at FROM users WHERE id = $1 AND company_id = $2
+`
+
+type GetCompanyUserParams struct {
+	ID        int32
+	CompanyID pgtype.Int4
+}
+
+func (q *Queries) GetCompanyUser(ctx context.Context, arg GetCompanyUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, getCompanyUser, arg.ID, arg.CompanyID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.Username,
+		&i.PasswordHash,
+		&i.UserType,
+		&i.PurchaseAccess,
+		&i.SalesAccess,
+		&i.SalesBelowCostApprove,
+		&i.Status,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, name, username, password_hash, role, created_at FROM users WHERE id = $1
+SELECT id, company_id, name, username, password_hash, user_type, purchase_access, sales_access, sales_below_cost_approve, status, created_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id int32) (User, error) {
@@ -52,17 +93,22 @@ func (q *Queries) GetUser(ctx context.Context, id int32) (User, error) {
 	var i User
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.Username,
 		&i.PasswordHash,
-		&i.Role,
+		&i.UserType,
+		&i.PurchaseAccess,
+		&i.SalesAccess,
+		&i.SalesBelowCostApprove,
+		&i.Status,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, name, username, password_hash, role, created_at FROM users WHERE username = $1
+SELECT id, company_id, name, username, password_hash, user_type, purchase_access, sales_access, sales_below_cost_approve, status, created_at FROM users WHERE username = $1
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
@@ -70,24 +116,65 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 	var i User
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.Username,
 		&i.PasswordHash,
-		&i.Role,
+		&i.UserType,
+		&i.PurchaseAccess,
+		&i.SalesAccess,
+		&i.SalesBelowCostApprove,
+		&i.Status,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
+const listCompanyUsers = `-- name: ListCompanyUsers :many
+SELECT id, company_id, name, username, password_hash, user_type, purchase_access, sales_access, sales_below_cost_approve, status, created_at FROM users WHERE company_id = $1 ORDER BY name
+`
+
+func (q *Queries) ListCompanyUsers(ctx context.Context, companyID pgtype.Int4) ([]User, error) {
+	rows, err := q.db.Query(ctx, listCompanyUsers, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.Name,
+			&i.Username,
+			&i.PasswordHash,
+			&i.UserType,
+			&i.PurchaseAccess,
+			&i.SalesAccess,
+			&i.SalesBelowCostApprove,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsers = `-- name: ListUsers :many
-SELECT id, name, username, role, created_at FROM users ORDER BY name
+SELECT id, name, username, user_type, created_at FROM users ORDER BY name
 `
 
 type ListUsersRow struct {
 	ID        int32
 	Name      string
 	Username  string
-	Role      string
+	UserType  string
 	CreatedAt pgtype.Timestamptz
 }
 
@@ -104,7 +191,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.ID,
 			&i.Name,
 			&i.Username,
-			&i.Role,
+			&i.UserType,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -115,4 +202,74 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateUserPermissions = `-- name: UpdateUserPermissions :one
+UPDATE users
+SET purchase_access = $3, sales_access = $4, sales_below_cost_approve = $5
+WHERE id = $1 AND company_id = $2
+RETURNING id, company_id, name, username, password_hash, user_type, purchase_access, sales_access, sales_below_cost_approve, status, created_at
+`
+
+type UpdateUserPermissionsParams struct {
+	ID                    int32
+	CompanyID             pgtype.Int4
+	PurchaseAccess        bool
+	SalesAccess           bool
+	SalesBelowCostApprove bool
+}
+
+func (q *Queries) UpdateUserPermissions(ctx context.Context, arg UpdateUserPermissionsParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserPermissions,
+		arg.ID,
+		arg.CompanyID,
+		arg.PurchaseAccess,
+		arg.SalesAccess,
+		arg.SalesBelowCostApprove,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.Username,
+		&i.PasswordHash,
+		&i.UserType,
+		&i.PurchaseAccess,
+		&i.SalesAccess,
+		&i.SalesBelowCostApprove,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateUserStatus = `-- name: UpdateUserStatus :one
+UPDATE users SET status = $3 WHERE id = $1 AND company_id = $2
+RETURNING id, company_id, name, username, password_hash, user_type, purchase_access, sales_access, sales_below_cost_approve, status, created_at
+`
+
+type UpdateUserStatusParams struct {
+	ID        int32
+	CompanyID pgtype.Int4
+	Status    string
+}
+
+func (q *Queries) UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserStatus, arg.ID, arg.CompanyID, arg.Status)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.Username,
+		&i.PasswordHash,
+		&i.UserType,
+		&i.PurchaseAccess,
+		&i.SalesAccess,
+		&i.SalesBelowCostApprove,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
 }

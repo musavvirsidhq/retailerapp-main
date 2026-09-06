@@ -12,34 +12,41 @@ import (
 )
 
 const createProduct = `-- name: CreateProduct :one
-INSERT INTO products (name, unit, purchase_price, selling_price, current_stock)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, name, unit, purchase_price, selling_price, current_stock, created_at
+INSERT INTO products (company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at
 `
 
 type CreateProductParams struct {
-	Name          string
-	Unit          string
-	PurchasePrice pgtype.Numeric
-	SellingPrice  pgtype.Numeric
-	CurrentStock  pgtype.Numeric
+	CompanyID           int32
+	Name                string
+	Sku                 string
+	Unit                string
+	CategoryID          int32
+	SubcategoryID       pgtype.Int4
+	CurrentSellingPrice pgtype.Numeric
 }
 
 func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error) {
 	row := q.db.QueryRow(ctx, createProduct,
+		arg.CompanyID,
 		arg.Name,
+		arg.Sku,
 		arg.Unit,
-		arg.PurchasePrice,
-		arg.SellingPrice,
-		arg.CurrentStock,
+		arg.CategoryID,
+		arg.SubcategoryID,
+		arg.CurrentSellingPrice,
 	)
 	var i Product
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
+		&i.Sku,
 		&i.Unit,
-		&i.PurchasePrice,
-		&i.SellingPrice,
+		&i.CategoryID,
+		&i.SubcategoryID,
+		&i.CurrentSellingPrice,
 		&i.CurrentStock,
 		&i.CreatedAt,
 	)
@@ -47,27 +54,40 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (P
 }
 
 const deleteProduct = `-- name: DeleteProduct :exec
-DELETE FROM products WHERE id = $1
+DELETE FROM products WHERE id = $1 AND company_id = $2
 `
 
-func (q *Queries) DeleteProduct(ctx context.Context, id int32) error {
-	_, err := q.db.Exec(ctx, deleteProduct, id)
+type DeleteProductParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) DeleteProduct(ctx context.Context, arg DeleteProductParams) error {
+	_, err := q.db.Exec(ctx, deleteProduct, arg.ID, arg.CompanyID)
 	return err
 }
 
 const getProduct = `-- name: GetProduct :one
-SELECT id, name, unit, purchase_price, selling_price, current_stock, created_at FROM products WHERE id = $1
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at FROM products WHERE id = $1 AND company_id = $2
 `
 
-func (q *Queries) GetProduct(ctx context.Context, id int32) (Product, error) {
-	row := q.db.QueryRow(ctx, getProduct, id)
+type GetProductParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) GetProduct(ctx context.Context, arg GetProductParams) (Product, error) {
+	row := q.db.QueryRow(ctx, getProduct, arg.ID, arg.CompanyID)
 	var i Product
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
+		&i.Sku,
 		&i.Unit,
-		&i.PurchasePrice,
-		&i.SellingPrice,
+		&i.CategoryID,
+		&i.SubcategoryID,
+		&i.CurrentSellingPrice,
 		&i.CurrentStock,
 		&i.CreatedAt,
 	)
@@ -75,11 +95,11 @@ func (q *Queries) GetProduct(ctx context.Context, id int32) (Product, error) {
 }
 
 const listProducts = `-- name: ListProducts :many
-SELECT id, name, unit, purchase_price, selling_price, current_stock, created_at FROM products ORDER BY name
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at FROM products WHERE company_id = $1 ORDER BY name
 `
 
-func (q *Queries) ListProducts(ctx context.Context) ([]Product, error) {
-	rows, err := q.db.Query(ctx, listProducts)
+func (q *Queries) ListProducts(ctx context.Context, companyID int32) ([]Product, error) {
+	rows, err := q.db.Query(ctx, listProducts, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -89,10 +109,13 @@ func (q *Queries) ListProducts(ctx context.Context) ([]Product, error) {
 		var i Product
 		if err := rows.Scan(
 			&i.ID,
+			&i.CompanyID,
 			&i.Name,
+			&i.Sku,
 			&i.Unit,
-			&i.PurchasePrice,
-			&i.SellingPrice,
+			&i.CategoryID,
+			&i.SubcategoryID,
+			&i.CurrentSellingPrice,
 			&i.CurrentStock,
 			&i.CreatedAt,
 		); err != nil {
@@ -108,34 +131,72 @@ func (q *Queries) ListProducts(ctx context.Context) ([]Product, error) {
 
 const updateProduct = `-- name: UpdateProduct :one
 UPDATE products
-SET name = $2, unit = $3, purchase_price = $4, selling_price = $5
-WHERE id = $1
-RETURNING id, name, unit, purchase_price, selling_price, current_stock, created_at
+SET name = $3, sku = $4, unit = $5, category_id = $6, subcategory_id = $7, current_selling_price = $8
+WHERE id = $1 AND company_id = $2
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at
 `
 
 type UpdateProductParams struct {
-	ID            int32
-	Name          string
-	Unit          string
-	PurchasePrice pgtype.Numeric
-	SellingPrice  pgtype.Numeric
+	ID                  int32
+	CompanyID           int32
+	Name                string
+	Sku                 string
+	Unit                string
+	CategoryID          int32
+	SubcategoryID       pgtype.Int4
+	CurrentSellingPrice pgtype.Numeric
 }
 
 func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (Product, error) {
 	row := q.db.QueryRow(ctx, updateProduct,
 		arg.ID,
+		arg.CompanyID,
 		arg.Name,
+		arg.Sku,
 		arg.Unit,
-		arg.PurchasePrice,
-		arg.SellingPrice,
+		arg.CategoryID,
+		arg.SubcategoryID,
+		arg.CurrentSellingPrice,
 	)
 	var i Product
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
+		&i.Sku,
 		&i.Unit,
-		&i.PurchasePrice,
-		&i.SellingPrice,
+		&i.CategoryID,
+		&i.SubcategoryID,
+		&i.CurrentSellingPrice,
+		&i.CurrentStock,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateProductSellingPrice = `-- name: UpdateProductSellingPrice :one
+UPDATE products SET current_selling_price = $3 WHERE id = $1 AND company_id = $2
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at
+`
+
+type UpdateProductSellingPriceParams struct {
+	ID                  int32
+	CompanyID           int32
+	CurrentSellingPrice pgtype.Numeric
+}
+
+func (q *Queries) UpdateProductSellingPrice(ctx context.Context, arg UpdateProductSellingPriceParams) (Product, error) {
+	row := q.db.QueryRow(ctx, updateProductSellingPrice, arg.ID, arg.CompanyID, arg.CurrentSellingPrice)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.Sku,
+		&i.Unit,
+		&i.CategoryID,
+		&i.SubcategoryID,
+		&i.CurrentSellingPrice,
 		&i.CurrentStock,
 		&i.CreatedAt,
 	)

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
@@ -46,14 +47,18 @@ func main() {
 	}
 
 	user, err := queries.CreateUser(ctx, db.CreateUserParams{
-		Name:         name,
-		Username:     username,
-		PasswordHash: string(hash),
-		Role:         "admin",
+		CompanyID:             pgtype.Int4{Valid: false},
+		Name:                  name,
+		Username:              username,
+		PasswordHash:          string(hash),
+		UserType:              "SUPER_ADMIN",
+		PurchaseAccess:        false,
+		SalesAccess:           false,
+		SalesBelowCostApprove: false,
 	})
 	if err != nil {
 		log.Fatalf("failed to create user: %v", err)
 	}
 
-	fmt.Printf("Admin user created: %s (id=%d)\n", user.Username, user.ID)
+	fmt.Printf("Super admin created: %s (id=%d)\n", user.Username, user.ID)
 }

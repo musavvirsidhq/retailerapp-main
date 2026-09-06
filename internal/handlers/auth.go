@@ -8,6 +8,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Sivanandha02/retailapp/internal/db"
+	appMiddleware "github.com/Sivanandha02/retailapp/internal/middleware"
 )
 
 type AuthHandler struct {
@@ -37,6 +38,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.Status != "ACTIVE" {
+		http.Error(w, "this account has been disabled", http.StatusForbidden)
+		return
+	}
+
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(in.Password)); err != nil {
 		http.Error(w, "invalid username or password", http.StatusUnauthorized)
 		return
@@ -44,19 +50,22 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	session, _ := h.Store.Get(r, "retailapp_session")
 	session.Values["user_id"] = user.ID
-	session.Values["role"] = user.Role
 	session.Values["name"] = user.Name
+	session.Values["user_type"] = user.UserType
+	session.Values["purchase_access"] = user.PurchaseAccess
+	session.Values["sales_access"] = user.SalesAccess
+	session.Values["sales_below_cost_approve"] = user.SalesBelowCostApprove
+	if user.CompanyID.Valid {
+		session.Values["company_id"] = user.CompanyID.Int32
+	} else {
+		delete(session.Values, "company_id")
+	}
 	if err := session.Save(r, w); err != nil {
 		http.Error(w, "failed to create session", http.StatusInternalServerError)
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{
-		"id":       user.ID,
-		"name":     user.Name,
-		"username": user.Username,
-		"role":     user.Role,
-	})
+	writeJSON(w, h.userResponse(user))
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
@@ -70,16 +79,34 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
-	session, _ := h.Store.Get(r, "retailapp_session")
-	userID, ok := session.Values["user_id"]
+	userID, ok := appMiddleware.UserIDFromContext(r.Context())
 	if !ok {
 		http.Error(w, "not logged in", http.StatusUnauthorized)
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{
-		"id":   userID,
-		"name": session.Values["name"],
-		"role": session.Values["role"],
-	})
+	user, err := h.Queries.GetUser(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "not logged in", http.StatusUnauthorized)
+		return
+	}
+
+	writeJSON(w, h.userResponse(user))
+}
+
+func (h *AuthHandler) userResponse(user db.User) map[string]interface{} {
+	resp := map[string]interface{}{
+		"id":                       user.ID,
+		"name":                     user.Name,
+		"username":                 user.Username,
+		"user_type":                user.UserType,
+		"purchase_access":          user.PurchaseAccess,
+		"sales_access":             user.SalesAccess,
+		"sales_below_cost_approve": user.SalesBelowCostApprove,
+		"company_id":               nil,
+	}
+	if user.CompanyID.Valid {
+		resp["company_id"] = user.CompanyID.Int32
+	}
+	return resp
 }

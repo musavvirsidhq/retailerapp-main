@@ -12,30 +12,35 @@ import (
 )
 
 const createPayment = `-- name: CreatePayment :one
-INSERT INTO payments (party_type, party_id, amount, payment_mode, notes)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, party_type, party_id, amount, payment_mode, payment_date, notes, created_by, created_at
+INSERT INTO payments (company_id, party_type, party_id, amount, payment_mode, notes, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, company_id, party_type, party_id, amount, payment_mode, payment_date, notes, created_by, created_at
 `
 
 type CreatePaymentParams struct {
+	CompanyID   int32
 	PartyType   string
 	PartyID     int32
 	Amount      pgtype.Numeric
 	PaymentMode string
 	Notes       pgtype.Text
+	CreatedBy   pgtype.Int4
 }
 
 func (q *Queries) CreatePayment(ctx context.Context, arg CreatePaymentParams) (Payment, error) {
 	row := q.db.QueryRow(ctx, createPayment,
+		arg.CompanyID,
 		arg.PartyType,
 		arg.PartyID,
 		arg.Amount,
 		arg.PaymentMode,
 		arg.Notes,
+		arg.CreatedBy,
 	)
 	var i Payment
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.PartyType,
 		&i.PartyID,
 		&i.Amount,
@@ -51,25 +56,30 @@ func (q *Queries) CreatePayment(ctx context.Context, arg CreatePaymentParams) (P
 const factoryBalance = `-- name: FactoryBalance :one
 SELECT
   (
-    COALESCE((SELECT SUM(pu.total_amount) FROM purchases pu WHERE pu.factory_id = $1), 0)
-    - COALESCE((SELECT SUM(pu.amount_paid) FROM purchases pu WHERE pu.factory_id = $1), 0)
-    - COALESCE((SELECT SUM(pay.amount) FROM payments pay WHERE pay.party_type = 'factory' AND pay.party_id = $1), 0)
+    COALESCE((SELECT SUM(pu.total_amount) FROM purchases pu WHERE pu.factory_id = $1 AND pu.company_id = $2 AND pu.status = 'COMPLETED'), 0)
+    - COALESCE((SELECT SUM(pu.amount_paid) FROM purchases pu WHERE pu.factory_id = $1 AND pu.company_id = $2 AND pu.status = 'COMPLETED'), 0)
+    - COALESCE((SELECT SUM(pay.amount) FROM payments pay WHERE pay.party_type = 'factory' AND pay.party_id = $1 AND pay.company_id = $2), 0)
   )::numeric(12,2) AS balance
 `
 
-func (q *Queries) FactoryBalance(ctx context.Context, factoryID int32) (pgtype.Numeric, error) {
-	row := q.db.QueryRow(ctx, factoryBalance, factoryID)
+type FactoryBalanceParams struct {
+	FactoryID int32
+	CompanyID int32
+}
+
+func (q *Queries) FactoryBalance(ctx context.Context, arg FactoryBalanceParams) (pgtype.Numeric, error) {
+	row := q.db.QueryRow(ctx, factoryBalance, arg.FactoryID, arg.CompanyID)
 	var balance pgtype.Numeric
 	err := row.Scan(&balance)
 	return balance, err
 }
 
 const listPayments = `-- name: ListPayments :many
-SELECT id, party_type, party_id, amount, payment_mode, payment_date, notes, created_by, created_at FROM payments ORDER BY payment_date DESC, id DESC
+SELECT id, company_id, party_type, party_id, amount, payment_mode, payment_date, notes, created_by, created_at FROM payments WHERE company_id = $1 ORDER BY payment_date DESC, id DESC
 `
 
-func (q *Queries) ListPayments(ctx context.Context) ([]Payment, error) {
-	rows, err := q.db.Query(ctx, listPayments)
+func (q *Queries) ListPayments(ctx context.Context, companyID int32) ([]Payment, error) {
+	rows, err := q.db.Query(ctx, listPayments, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +89,7 @@ func (q *Queries) ListPayments(ctx context.Context) ([]Payment, error) {
 		var i Payment
 		if err := rows.Scan(
 			&i.ID,
+			&i.CompanyID,
 			&i.PartyType,
 			&i.PartyID,
 			&i.Amount,
@@ -99,16 +110,17 @@ func (q *Queries) ListPayments(ctx context.Context) ([]Payment, error) {
 }
 
 const listPaymentsByParty = `-- name: ListPaymentsByParty :many
-SELECT id, party_type, party_id, amount, payment_mode, payment_date, notes, created_by, created_at FROM payments WHERE party_type = $1 AND party_id = $2 ORDER BY payment_date DESC, id DESC
+SELECT id, company_id, party_type, party_id, amount, payment_mode, payment_date, notes, created_by, created_at FROM payments WHERE company_id = $1 AND party_type = $2 AND party_id = $3 ORDER BY payment_date DESC, id DESC
 `
 
 type ListPaymentsByPartyParams struct {
+	CompanyID int32
 	PartyType string
 	PartyID   int32
 }
 
 func (q *Queries) ListPaymentsByParty(ctx context.Context, arg ListPaymentsByPartyParams) ([]Payment, error) {
-	rows, err := q.db.Query(ctx, listPaymentsByParty, arg.PartyType, arg.PartyID)
+	rows, err := q.db.Query(ctx, listPaymentsByParty, arg.CompanyID, arg.PartyType, arg.PartyID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +130,7 @@ func (q *Queries) ListPaymentsByParty(ctx context.Context, arg ListPaymentsByPar
 		var i Payment
 		if err := rows.Scan(
 			&i.ID,
+			&i.CompanyID,
 			&i.PartyType,
 			&i.PartyID,
 			&i.Amount,
@@ -140,15 +153,20 @@ func (q *Queries) ListPaymentsByParty(ctx context.Context, arg ListPaymentsByPar
 const shopBalance = `-- name: ShopBalance :one
 SELECT
   (
-    COALESCE((SELECT s.opening_balance FROM shops s WHERE s.id = $1), 0)
-    + COALESCE((SELECT SUM(sa.total_amount) FROM sales sa WHERE sa.shop_id = $1), 0)
-    - COALESCE((SELECT SUM(sa.amount_paid) FROM sales sa WHERE sa.shop_id = $1), 0)
-    - COALESCE((SELECT SUM(pay.amount) FROM payments pay WHERE pay.party_type = 'shop' AND pay.party_id = $1), 0)
+    COALESCE((SELECT s.opening_balance FROM shops s WHERE s.id = $1 AND s.company_id = $2), 0)
+    + COALESCE((SELECT SUM(sa.total_amount) FROM sales sa WHERE sa.shop_id = $1 AND sa.company_id = $2 AND sa.status = 'COMPLETED'), 0)
+    - COALESCE((SELECT SUM(sa.amount_paid) FROM sales sa WHERE sa.shop_id = $1 AND sa.company_id = $2 AND sa.status = 'COMPLETED'), 0)
+    - COALESCE((SELECT SUM(pay.amount) FROM payments pay WHERE pay.party_type = 'shop' AND pay.party_id = $1 AND pay.company_id = $2), 0)
   )::numeric(12,2) AS balance
 `
 
-func (q *Queries) ShopBalance(ctx context.Context, id int32) (pgtype.Numeric, error) {
-	row := q.db.QueryRow(ctx, shopBalance, id)
+type ShopBalanceParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) ShopBalance(ctx context.Context, arg ShopBalanceParams) (pgtype.Numeric, error) {
+	row := q.db.QueryRow(ctx, shopBalance, arg.ID, arg.CompanyID)
 	var balance pgtype.Numeric
 	err := row.Scan(&balance)
 	return balance, err

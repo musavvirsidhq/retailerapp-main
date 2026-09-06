@@ -12,31 +12,37 @@ import (
 )
 
 const createFactory = `-- name: CreateFactory :one
-INSERT INTO factories (name, contact_person, phone, address)
-VALUES ($1, $2, $3, $4)
-RETURNING id, name, contact_person, phone, address, created_at
+INSERT INTO factories (company_id, name, contact_person, primary_phone, secondary_phone, address)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at
 `
 
 type CreateFactoryParams struct {
-	Name          string
-	ContactPerson pgtype.Text
-	Phone         pgtype.Text
-	Address       pgtype.Text
+	CompanyID      int32
+	Name           string
+	ContactPerson  pgtype.Text
+	PrimaryPhone   string
+	SecondaryPhone pgtype.Text
+	Address        pgtype.Text
 }
 
 func (q *Queries) CreateFactory(ctx context.Context, arg CreateFactoryParams) (Factory, error) {
 	row := q.db.QueryRow(ctx, createFactory,
+		arg.CompanyID,
 		arg.Name,
 		arg.ContactPerson,
-		arg.Phone,
+		arg.PrimaryPhone,
+		arg.SecondaryPhone,
 		arg.Address,
 	)
 	var i Factory
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.ContactPerson,
-		&i.Phone,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
 		&i.Address,
 		&i.CreatedAt,
 	)
@@ -44,26 +50,38 @@ func (q *Queries) CreateFactory(ctx context.Context, arg CreateFactoryParams) (F
 }
 
 const deleteFactory = `-- name: DeleteFactory :exec
-DELETE FROM factories WHERE id = $1
+DELETE FROM factories WHERE id = $1 AND company_id = $2
 `
 
-func (q *Queries) DeleteFactory(ctx context.Context, id int32) error {
-	_, err := q.db.Exec(ctx, deleteFactory, id)
+type DeleteFactoryParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) DeleteFactory(ctx context.Context, arg DeleteFactoryParams) error {
+	_, err := q.db.Exec(ctx, deleteFactory, arg.ID, arg.CompanyID)
 	return err
 }
 
 const getFactory = `-- name: GetFactory :one
-SELECT id, name, contact_person, phone, address, created_at FROM factories WHERE id = $1
+SELECT id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at FROM factories WHERE id = $1 AND company_id = $2
 `
 
-func (q *Queries) GetFactory(ctx context.Context, id int32) (Factory, error) {
-	row := q.db.QueryRow(ctx, getFactory, id)
+type GetFactoryParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) GetFactory(ctx context.Context, arg GetFactoryParams) (Factory, error) {
+	row := q.db.QueryRow(ctx, getFactory, arg.ID, arg.CompanyID)
 	var i Factory
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.ContactPerson,
-		&i.Phone,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
 		&i.Address,
 		&i.CreatedAt,
 	)
@@ -71,11 +89,11 @@ func (q *Queries) GetFactory(ctx context.Context, id int32) (Factory, error) {
 }
 
 const listFactories = `-- name: ListFactories :many
-SELECT id, name, contact_person, phone, address, created_at FROM factories ORDER BY name
+SELECT id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at FROM factories WHERE company_id = $1 ORDER BY name
 `
 
-func (q *Queries) ListFactories(ctx context.Context) ([]Factory, error) {
-	rows, err := q.db.Query(ctx, listFactories)
+func (q *Queries) ListFactories(ctx context.Context, companyID int32) ([]Factory, error) {
+	rows, err := q.db.Query(ctx, listFactories, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -85,9 +103,11 @@ func (q *Queries) ListFactories(ctx context.Context) ([]Factory, error) {
 		var i Factory
 		if err := rows.Scan(
 			&i.ID,
+			&i.CompanyID,
 			&i.Name,
 			&i.ContactPerson,
-			&i.Phone,
+			&i.PrimaryPhone,
+			&i.SecondaryPhone,
 			&i.Address,
 			&i.CreatedAt,
 		); err != nil {
@@ -103,33 +123,39 @@ func (q *Queries) ListFactories(ctx context.Context) ([]Factory, error) {
 
 const updateFactory = `-- name: UpdateFactory :one
 UPDATE factories
-SET name = $2, contact_person = $3, phone = $4, address = $5
-WHERE id = $1
-RETURNING id, name, contact_person, phone, address, created_at
+SET name = $3, contact_person = $4, primary_phone = $5, secondary_phone = $6, address = $7
+WHERE id = $1 AND company_id = $2
+RETURNING id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at
 `
 
 type UpdateFactoryParams struct {
-	ID            int32
-	Name          string
-	ContactPerson pgtype.Text
-	Phone         pgtype.Text
-	Address       pgtype.Text
+	ID             int32
+	CompanyID      int32
+	Name           string
+	ContactPerson  pgtype.Text
+	PrimaryPhone   string
+	SecondaryPhone pgtype.Text
+	Address        pgtype.Text
 }
 
 func (q *Queries) UpdateFactory(ctx context.Context, arg UpdateFactoryParams) (Factory, error) {
 	row := q.db.QueryRow(ctx, updateFactory,
 		arg.ID,
+		arg.CompanyID,
 		arg.Name,
 		arg.ContactPerson,
-		arg.Phone,
+		arg.PrimaryPhone,
+		arg.SecondaryPhone,
 		arg.Address,
 	)
 	var i Factory
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.ContactPerson,
-		&i.Phone,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
 		&i.Address,
 		&i.CreatedAt,
 	)

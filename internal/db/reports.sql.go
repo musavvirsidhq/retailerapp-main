@@ -23,12 +23,13 @@ SELECT
 FROM factories f
 LEFT JOIN (
   SELECT factory_id, SUM(total_amount) AS total, SUM(amount_paid) AS paid
-  FROM purchases GROUP BY factory_id
+  FROM purchases WHERE purchases.company_id = $1 AND status = 'COMPLETED' GROUP BY factory_id
 ) pu_agg ON pu_agg.factory_id = f.id
 LEFT JOIN (
   SELECT party_id, SUM(amount) AS paid
-  FROM payments WHERE party_type = 'factory' GROUP BY party_id
+  FROM payments WHERE payments.company_id = $1 AND party_type = 'factory' GROUP BY party_id
 ) pay_agg ON pay_agg.party_id = f.id
+WHERE f.company_id = $1
 ORDER BY balance DESC
 `
 
@@ -38,8 +39,8 @@ type FactoryPayablesRow struct {
 	Balance pgtype.Numeric
 }
 
-func (q *Queries) FactoryPayables(ctx context.Context) ([]FactoryPayablesRow, error) {
-	rows, err := q.db.Query(ctx, factoryPayables)
+func (q *Queries) FactoryPayables(ctx context.Context, companyID int32) ([]FactoryPayablesRow, error) {
+	rows, err := q.db.Query(ctx, factoryPayables, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -59,11 +60,11 @@ func (q *Queries) FactoryPayables(ctx context.Context) ([]FactoryPayablesRow, er
 }
 
 const lowStockProducts = `-- name: LowStockProducts :many
-SELECT id, name, unit, purchase_price, selling_price, current_stock, created_at FROM products WHERE current_stock < 10 ORDER BY current_stock ASC
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at FROM products WHERE company_id = $1 AND current_stock < 10 ORDER BY current_stock ASC
 `
 
-func (q *Queries) LowStockProducts(ctx context.Context) ([]Product, error) {
-	rows, err := q.db.Query(ctx, lowStockProducts)
+func (q *Queries) LowStockProducts(ctx context.Context, companyID int32) ([]Product, error) {
+	rows, err := q.db.Query(ctx, lowStockProducts, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -73,10 +74,13 @@ func (q *Queries) LowStockProducts(ctx context.Context) ([]Product, error) {
 		var i Product
 		if err := rows.Scan(
 			&i.ID,
+			&i.CompanyID,
 			&i.Name,
+			&i.Sku,
 			&i.Unit,
-			&i.PurchasePrice,
-			&i.SellingPrice,
+			&i.CategoryID,
+			&i.SubcategoryID,
+			&i.CurrentSellingPrice,
 			&i.CurrentStock,
 			&i.CreatedAt,
 		); err != nil {
@@ -92,14 +96,22 @@ func (q *Queries) LowStockProducts(ctx context.Context) ([]Product, error) {
 
 const profitSummary = `-- name: ProfitSummary :one
 SELECT
-  COALESCE(SUM((si.unit_price - p.purchase_price) * si.quantity), 0)::numeric(12,2) AS profit
+  COALESCE(SUM(si.line_total), 0)::numeric(12,2) -
+  COALESCE((
+    SELECT SUM(sicc.quantity * sicc.unit_cost)
+    FROM sale_item_cost_consumptions sicc
+    JOIN sale_items sii ON sii.id = sicc.sale_item_id
+    JOIN sales ss ON ss.id = sii.sale_id
+    WHERE ss.company_id = $1 AND ss.status = 'COMPLETED'
+  ), 0)::numeric(12,2) AS profit
 FROM sale_items si
-JOIN products p ON p.id = si.product_id
+JOIN sales s ON s.id = si.sale_id
+WHERE s.company_id = $1 AND s.status = 'COMPLETED'
 `
 
-func (q *Queries) ProfitSummary(ctx context.Context) (pgtype.Numeric, error) {
-	row := q.db.QueryRow(ctx, profitSummary)
-	var profit pgtype.Numeric
+func (q *Queries) ProfitSummary(ctx context.Context, companyID int32) (int32, error) {
+	row := q.db.QueryRow(ctx, profitSummary, companyID)
+	var profit int32
 	err := row.Scan(&profit)
 	return profit, err
 }
@@ -117,12 +129,13 @@ SELECT
 FROM shops s
 LEFT JOIN (
   SELECT shop_id, SUM(total_amount) AS total, SUM(amount_paid) AS paid
-  FROM sales GROUP BY shop_id
+  FROM sales WHERE sales.company_id = $1 AND status = 'COMPLETED' GROUP BY shop_id
 ) sales_agg ON sales_agg.shop_id = s.id
 LEFT JOIN (
   SELECT party_id, SUM(amount) AS paid
-  FROM payments WHERE party_type = 'shop' GROUP BY party_id
+  FROM payments WHERE payments.company_id = $1 AND party_type = 'shop' GROUP BY party_id
 ) pay_agg ON pay_agg.party_id = s.id
+WHERE s.company_id = $1
 ORDER BY balance DESC
 `
 
@@ -132,8 +145,8 @@ type ShopDuesRow struct {
 	Balance pgtype.Numeric
 }
 
-func (q *Queries) ShopDues(ctx context.Context) ([]ShopDuesRow, error) {
-	rows, err := q.db.Query(ctx, shopDues)
+func (q *Queries) ShopDues(ctx context.Context, companyID int32) ([]ShopDuesRow, error) {
+	rows, err := q.db.Query(ctx, shopDues, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +170,7 @@ SELECT
   COUNT(*)::int AS count,
   COALESCE(SUM(total_amount), 0)::numeric(12,2) AS total
 FROM purchases
-WHERE purchase_date = CURRENT_DATE
+WHERE company_id = $1 AND purchase_date = CURRENT_DATE AND status = 'COMPLETED'
 `
 
 type TodayPurchasesSummaryRow struct {
@@ -165,8 +178,8 @@ type TodayPurchasesSummaryRow struct {
 	Total pgtype.Numeric
 }
 
-func (q *Queries) TodayPurchasesSummary(ctx context.Context) (TodayPurchasesSummaryRow, error) {
-	row := q.db.QueryRow(ctx, todayPurchasesSummary)
+func (q *Queries) TodayPurchasesSummary(ctx context.Context, companyID int32) (TodayPurchasesSummaryRow, error) {
+	row := q.db.QueryRow(ctx, todayPurchasesSummary, companyID)
 	var i TodayPurchasesSummaryRow
 	err := row.Scan(&i.Count, &i.Total)
 	return i, err
@@ -177,7 +190,7 @@ SELECT
   COUNT(*)::int AS count,
   COALESCE(SUM(total_amount), 0)::numeric(12,2) AS total
 FROM sales
-WHERE sale_date = CURRENT_DATE
+WHERE company_id = $1 AND sale_date = CURRENT_DATE AND status = 'COMPLETED'
 `
 
 type TodaySalesSummaryRow struct {
@@ -185,8 +198,8 @@ type TodaySalesSummaryRow struct {
 	Total pgtype.Numeric
 }
 
-func (q *Queries) TodaySalesSummary(ctx context.Context) (TodaySalesSummaryRow, error) {
-	row := q.db.QueryRow(ctx, todaySalesSummary)
+func (q *Queries) TodaySalesSummary(ctx context.Context, companyID int32) (TodaySalesSummaryRow, error) {
+	row := q.db.QueryRow(ctx, todaySalesSummary, companyID)
 	var i TodaySalesSummaryRow
 	err := row.Scan(&i.Count, &i.Total)
 	return i, err

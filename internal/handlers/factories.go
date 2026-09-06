@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Sivanandha02/retailapp/internal/db"
+	appMiddleware "github.com/Sivanandha02/retailapp/internal/middleware"
 )
 
 type FactoryHandler struct {
@@ -21,12 +22,14 @@ func NewFactoryHandler(q *db.Queries) *FactoryHandler {
 type factoryInput struct {
 	Name           string `json:"name"`
 	ContactPerson  string `json:"contact_person"`
-	Phone          string `json:"phone"`
+	PrimaryPhone   string `json:"primary_phone"`
+	SecondaryPhone string `json:"secondary_phone"`
 	Address        string `json:"address"`
 }
 
 func (h *FactoryHandler) List(w http.ResponseWriter, r *http.Request) {
-	factories, err := h.Queries.ListFactories(r.Context())
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
+	factories, err := h.Queries.ListFactories(r.Context(), companyID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -38,31 +41,58 @@ func (h *FactoryHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FactoryHandler) Get(w http.ResponseWriter, r *http.Request) {
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	factory, err := h.Queries.GetFactory(r.Context(), int32(id))
+	factory, err := h.Queries.GetFactory(r.Context(), db.GetFactoryParams{ID: int32(id), CompanyID: companyID})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	writeJSON(w, factory)
 }
 
+func validatePhones(primary, secondary string) error {
+	if !phoneRegex.MatchString(primary) {
+		return errInvalidPhone
+	}
+	if secondary != "" {
+		if !phoneRegex.MatchString(secondary) {
+			return errInvalidPhone
+		}
+		if secondary == primary {
+			return errSamePhone
+		}
+	}
+	return nil
+}
+
 func (h *FactoryHandler) Create(w http.ResponseWriter, r *http.Request) {
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
 	var in factoryInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	if in.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if err := validatePhones(in.PrimaryPhone, in.SecondaryPhone); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	factory, err := h.Queries.CreateFactory(r.Context(), db.CreateFactoryParams{
-		Name:          in.Name,
-		ContactPerson: pgTextOrNil(in.ContactPerson),
-		Phone:         pgTextOrNil(in.Phone),
-		Address:       pgTextOrNil(in.Address),
+		CompanyID:      companyID,
+		Name:           in.Name,
+		ContactPerson:  pgTextOrNil(in.ContactPerson),
+		PrimaryPhone:   in.PrimaryPhone,
+		SecondaryPhone: pgTextOrNil(in.SecondaryPhone),
+		Address:        pgTextOrNil(in.Address),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -73,6 +103,7 @@ func (h *FactoryHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FactoryHandler) Update(w http.ResponseWriter, r *http.Request) {
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -84,13 +115,19 @@ func (h *FactoryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	if err := validatePhones(in.PrimaryPhone, in.SecondaryPhone); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	factory, err := h.Queries.UpdateFactory(r.Context(), db.UpdateFactoryParams{
-		ID:            int32(id),
-		Name:          in.Name,
-		ContactPerson: pgTextOrNil(in.ContactPerson),
-		Phone:         pgTextOrNil(in.Phone),
-		Address:       pgTextOrNil(in.Address),
+		ID:             int32(id),
+		CompanyID:      companyID,
+		Name:           in.Name,
+		ContactPerson:  pgTextOrNil(in.ContactPerson),
+		PrimaryPhone:   in.PrimaryPhone,
+		SecondaryPhone: pgTextOrNil(in.SecondaryPhone),
+		Address:        pgTextOrNil(in.Address),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -100,12 +137,13 @@ func (h *FactoryHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FactoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := h.Queries.DeleteFactory(r.Context(), int32(id)); err != nil {
+	if err := h.Queries.DeleteFactory(r.Context(), db.DeleteFactoryParams{ID: int32(id), CompanyID: companyID}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

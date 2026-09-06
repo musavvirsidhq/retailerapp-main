@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/Sivanandha02/retailapp/internal/db"
+	appMiddleware "github.com/Sivanandha02/retailapp/internal/middleware"
 )
 
 type ReportHandler struct {
@@ -15,7 +16,8 @@ func NewReportHandler(q *db.Queries) *ReportHandler {
 }
 
 func (h *ReportHandler) ShopDues(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.Queries.ShopDues(r.Context())
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
+	rows, err := h.Queries.ShopDues(r.Context(), companyID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -27,7 +29,8 @@ func (h *ReportHandler) ShopDues(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ReportHandler) FactoryPayables(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.Queries.FactoryPayables(r.Context())
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
+	rows, err := h.Queries.FactoryPayables(r.Context(), companyID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -39,7 +42,8 @@ func (h *ReportHandler) FactoryPayables(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *ReportHandler) LowStock(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.Queries.LowStockProducts(r.Context())
+	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
+	rows, err := h.Queries.LowStockProducts(r.Context(), companyID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -52,26 +56,27 @@ func (h *ReportHandler) LowStock(w http.ResponseWriter, r *http.Request) {
 
 func (h *ReportHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	companyID, _ := appMiddleware.CompanyIDFromContext(ctx)
 
-	todaySales, err := h.Queries.TodaySalesSummary(ctx)
+	todaySales, err := h.Queries.TodaySalesSummary(ctx, companyID)
 	if err != nil {
 		http.Error(w, "failed to get today's sales: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	todayPurchases, err := h.Queries.TodayPurchasesSummary(ctx)
+	todayPurchases, err := h.Queries.TodayPurchasesSummary(ctx, companyID)
 	if err != nil {
 		http.Error(w, "failed to get today's purchases: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	profit, err := h.Queries.ProfitSummary(ctx)
+	profit, err := h.Queries.ProfitSummary(ctx, companyID)
 	if err != nil {
 		http.Error(w, "failed to get profit summary: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	lowStock, err := h.Queries.LowStockProducts(ctx)
+	lowStock, err := h.Queries.LowStockProducts(ctx, companyID)
 	if err != nil {
 		http.Error(w, "failed to get low stock: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -80,7 +85,7 @@ func (h *ReportHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		lowStock = []db.Product{}
 	}
 
-	shopDues, err := h.Queries.ShopDues(ctx)
+	shopDues, err := h.Queries.ShopDues(ctx, companyID)
 	if err != nil {
 		http.Error(w, "failed to get shop dues: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -89,7 +94,7 @@ func (h *ReportHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		shopDues = []db.ShopDuesRow{}
 	}
 
-	factoryPayables, err := h.Queries.FactoryPayables(ctx)
+	factoryPayables, err := h.Queries.FactoryPayables(ctx, companyID)
 	if err != nil {
 		http.Error(w, "failed to get factory payables: "+err.Error(), http.StatusInternalServerError)
 		return

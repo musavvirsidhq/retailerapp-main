@@ -12,33 +12,39 @@ import (
 )
 
 const createShop = `-- name: CreateShop :one
-INSERT INTO shops (name, owner_name, phone, area, opening_balance)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, name, owner_name, phone, area, opening_balance, created_at
+INSERT INTO shops (company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at
 `
 
 type CreateShopParams struct {
+	CompanyID      int32
 	Name           string
 	OwnerName      pgtype.Text
-	Phone          pgtype.Text
+	PrimaryPhone   string
+	SecondaryPhone pgtype.Text
 	Area           pgtype.Text
 	OpeningBalance pgtype.Numeric
 }
 
 func (q *Queries) CreateShop(ctx context.Context, arg CreateShopParams) (Shop, error) {
 	row := q.db.QueryRow(ctx, createShop,
+		arg.CompanyID,
 		arg.Name,
 		arg.OwnerName,
-		arg.Phone,
+		arg.PrimaryPhone,
+		arg.SecondaryPhone,
 		arg.Area,
 		arg.OpeningBalance,
 	)
 	var i Shop
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.OwnerName,
-		&i.Phone,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
 		&i.Area,
 		&i.OpeningBalance,
 		&i.CreatedAt,
@@ -47,26 +53,38 @@ func (q *Queries) CreateShop(ctx context.Context, arg CreateShopParams) (Shop, e
 }
 
 const deleteShop = `-- name: DeleteShop :exec
-DELETE FROM shops WHERE id = $1
+DELETE FROM shops WHERE id = $1 AND company_id = $2
 `
 
-func (q *Queries) DeleteShop(ctx context.Context, id int32) error {
-	_, err := q.db.Exec(ctx, deleteShop, id)
+type DeleteShopParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) DeleteShop(ctx context.Context, arg DeleteShopParams) error {
+	_, err := q.db.Exec(ctx, deleteShop, arg.ID, arg.CompanyID)
 	return err
 }
 
 const getShop = `-- name: GetShop :one
-SELECT id, name, owner_name, phone, area, opening_balance, created_at FROM shops WHERE id = $1
+SELECT id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at FROM shops WHERE id = $1 AND company_id = $2
 `
 
-func (q *Queries) GetShop(ctx context.Context, id int32) (Shop, error) {
-	row := q.db.QueryRow(ctx, getShop, id)
+type GetShopParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) GetShop(ctx context.Context, arg GetShopParams) (Shop, error) {
+	row := q.db.QueryRow(ctx, getShop, arg.ID, arg.CompanyID)
 	var i Shop
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.OwnerName,
-		&i.Phone,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
 		&i.Area,
 		&i.OpeningBalance,
 		&i.CreatedAt,
@@ -75,11 +93,11 @@ func (q *Queries) GetShop(ctx context.Context, id int32) (Shop, error) {
 }
 
 const listShops = `-- name: ListShops :many
-SELECT id, name, owner_name, phone, area, opening_balance, created_at FROM shops ORDER BY name
+SELECT id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at FROM shops WHERE company_id = $1 ORDER BY name
 `
 
-func (q *Queries) ListShops(ctx context.Context) ([]Shop, error) {
-	rows, err := q.db.Query(ctx, listShops)
+func (q *Queries) ListShops(ctx context.Context, companyID int32) ([]Shop, error) {
+	rows, err := q.db.Query(ctx, listShops, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -89,9 +107,11 @@ func (q *Queries) ListShops(ctx context.Context) ([]Shop, error) {
 		var i Shop
 		if err := rows.Scan(
 			&i.ID,
+			&i.CompanyID,
 			&i.Name,
 			&i.OwnerName,
-			&i.Phone,
+			&i.PrimaryPhone,
+			&i.SecondaryPhone,
 			&i.Area,
 			&i.OpeningBalance,
 			&i.CreatedAt,
@@ -108,33 +128,39 @@ func (q *Queries) ListShops(ctx context.Context) ([]Shop, error) {
 
 const updateShop = `-- name: UpdateShop :one
 UPDATE shops
-SET name = $2, owner_name = $3, phone = $4, area = $5
-WHERE id = $1
-RETURNING id, name, owner_name, phone, area, opening_balance, created_at
+SET name = $3, owner_name = $4, primary_phone = $5, secondary_phone = $6, area = $7
+WHERE id = $1 AND company_id = $2
+RETURNING id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at
 `
 
 type UpdateShopParams struct {
-	ID        int32
-	Name      string
-	OwnerName pgtype.Text
-	Phone     pgtype.Text
-	Area      pgtype.Text
+	ID             int32
+	CompanyID      int32
+	Name           string
+	OwnerName      pgtype.Text
+	PrimaryPhone   string
+	SecondaryPhone pgtype.Text
+	Area           pgtype.Text
 }
 
 func (q *Queries) UpdateShop(ctx context.Context, arg UpdateShopParams) (Shop, error) {
 	row := q.db.QueryRow(ctx, updateShop,
 		arg.ID,
+		arg.CompanyID,
 		arg.Name,
 		arg.OwnerName,
-		arg.Phone,
+		arg.PrimaryPhone,
+		arg.SecondaryPhone,
 		arg.Area,
 	)
 	var i Shop
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.OwnerName,
-		&i.Phone,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
 		&i.Area,
 		&i.OpeningBalance,
 		&i.CreatedAt,

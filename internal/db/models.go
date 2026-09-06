@@ -8,17 +8,60 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuditLog struct {
+	ID              int32
+	CompanyID       pgtype.Int4
+	ActorUserID     pgtype.Int4
+	Action          string
+	EntityType      string
+	EntityID        int32
+	Reason          pgtype.Text
+	ReversalTxnID   pgtype.Int4
+	InventoryImpact []byte
+	PaymentImpact   []byte
+	CreatedAt       pgtype.Timestamptz
+}
+
+type BillSequence struct {
+	CompanyID  int32
+	BillType   string
+	NextNumber int32
+}
+
+type Category struct {
+	ID        int32
+	CompanyID int32
+	Name      string
+	CreatedAt pgtype.Timestamptz
+}
+
+type Company struct {
+	ID          int32
+	CompanyName string
+	CompanyCode string
+	Status      string
+	JoiningDate pgtype.Date
+	CreatedOn   pgtype.Timestamptz
+	ModifiedOn  pgtype.Timestamptz
+	CreatedBy   pgtype.Int4
+	ModifiedBy  pgtype.Int4
+	Version     int32
+}
+
 type Factory struct {
-	ID            int32
-	Name          string
-	ContactPerson pgtype.Text
-	Phone         pgtype.Text
-	Address       pgtype.Text
-	CreatedAt     pgtype.Timestamptz
+	ID             int32
+	CompanyID      int32
+	Name           string
+	ContactPerson  pgtype.Text
+	PrimaryPhone   string
+	SecondaryPhone pgtype.Text
+	Address        pgtype.Text
+	CreatedAt      pgtype.Timestamptz
 }
 
 type Payment struct {
 	ID          int32
+	CompanyID   int32
 	PartyType   string
 	PartyID     int32
 	Amount      pgtype.Numeric
@@ -30,70 +73,144 @@ type Payment struct {
 }
 
 type Product struct {
-	ID            int32
-	Name          string
-	Unit          string
-	PurchasePrice pgtype.Numeric
-	SellingPrice  pgtype.Numeric
-	CurrentStock  pgtype.Numeric
-	CreatedAt     pgtype.Timestamptz
+	ID                  int32
+	CompanyID           int32
+	Name                string
+	Sku                 string
+	Unit                string
+	CategoryID          int32
+	SubcategoryID       pgtype.Int4
+	CurrentSellingPrice pgtype.Numeric
+	CurrentStock        pgtype.Numeric
+	CreatedAt           pgtype.Timestamptz
+}
+
+type ProductCostLayer struct {
+	ID                 int32
+	CompanyID          int32
+	ProductID          int32
+	PurchaseBillItemID int32
+	BuyingPrice        pgtype.Numeric
+	QuantityReceived   pgtype.Numeric
+	QuantityRemaining  pgtype.Numeric
+	CreatedOn          pgtype.Timestamptz
+	CreatedBy          pgtype.Int4
+	Status             string
 }
 
 type Purchase struct {
-	ID           int32
-	FactoryID    int32
-	InvoiceNo    pgtype.Text
-	PurchaseDate pgtype.Date
-	TotalAmount  pgtype.Numeric
-	AmountPaid   pgtype.Numeric
-	CreatedBy    pgtype.Int4
-	CreatedAt    pgtype.Timestamptz
+	ID              int32
+	CompanyID       int32
+	BillNumber      string
+	FactoryID       int32
+	InvoiceNo       pgtype.Text
+	PurchaseDate    pgtype.Date
+	TotalAmount     pgtype.Numeric
+	AmountPaid      pgtype.Numeric
+	Status          string
+	CancelledReason pgtype.Text
+	CancelledBy     pgtype.Int4
+	CancelledAt     pgtype.Timestamptz
+	CreatedBy       pgtype.Int4
+	CreatedAt       pgtype.Timestamptz
 }
 
 type PurchaseItem struct {
 	ID         int32
 	PurchaseID int32
 	ProductID  int32
+	Unit       string
 	Quantity   pgtype.Numeric
 	UnitPrice  pgtype.Numeric
 	LineTotal  pgtype.Numeric
 }
 
 type Sale struct {
-	ID          int32
-	ShopID      int32
-	SaleDate    pgtype.Date
-	TotalAmount pgtype.Numeric
-	AmountPaid  pgtype.Numeric
-	PaymentType string
-	CreatedBy   pgtype.Int4
-	CreatedAt   pgtype.Timestamptz
+	ID              int32
+	CompanyID       int32
+	BillNumber      string
+	ShopID          int32
+	SaleDate        pgtype.Date
+	TotalAmount     pgtype.Numeric
+	AmountPaid      pgtype.Numeric
+	PaymentType     string
+	Status          string
+	CancelledReason pgtype.Text
+	CancelledBy     pgtype.Int4
+	CancelledAt     pgtype.Timestamptz
+	CreatedBy       pgtype.Int4
+	CreatedAt       pgtype.Timestamptz
 }
 
 type SaleItem struct {
 	ID        int32
 	SaleID    int32
 	ProductID int32
+	Unit      string
 	Quantity  pgtype.Numeric
 	UnitPrice pgtype.Numeric
 	LineTotal pgtype.Numeric
+	BelowCost bool
+}
+
+type SaleItemCostConsumption struct {
+	ID                 int32
+	SaleItemID         int32
+	ProductCostLayerID int32
+	Quantity           pgtype.Numeric
+	UnitCost           pgtype.Numeric
 }
 
 type Shop struct {
 	ID             int32
+	CompanyID      int32
 	Name           string
 	OwnerName      pgtype.Text
-	Phone          pgtype.Text
+	PrimaryPhone   string
+	SecondaryPhone pgtype.Text
 	Area           pgtype.Text
 	OpeningBalance pgtype.Numeric
 	CreatedAt      pgtype.Timestamptz
 }
 
+type Subcategory struct {
+	ID         int32
+	CompanyID  int32
+	CategoryID int32
+	Name       string
+	CreatedAt  pgtype.Timestamptz
+}
+
+type Subscription struct {
+	ID               int32
+	CompanyID        int32
+	SubscriptionType string
+	StartDate        pgtype.Date
+	ExpiryDate       pgtype.Date
+	Amount           pgtype.Numeric
+	PurchaseDate     pgtype.Date
+	Status           string
+	GrantedBy        pgtype.Int4
+	CreatedOn        pgtype.Timestamptz
+	ModifiedOn       pgtype.Timestamptz
+	Version          int32
+}
+
+type Unit struct {
+	Code  string
+	Label string
+}
+
 type User struct {
-	ID           int32
-	Name         string
-	Username     string
-	PasswordHash string
-	Role         string
-	CreatedAt    pgtype.Timestamptz
+	ID                    int32
+	CompanyID             pgtype.Int4
+	Name                  string
+	Username              string
+	PasswordHash          string
+	UserType              string
+	PurchaseAccess        bool
+	SalesAccess           bool
+	SalesBelowCostApprove bool
+	Status                string
+	CreatedAt             pgtype.Timestamptz
 }

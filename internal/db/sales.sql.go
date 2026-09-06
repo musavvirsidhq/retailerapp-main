@@ -11,34 +11,87 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createSale = `-- name: CreateSale :one
-INSERT INTO sales (shop_id, total_amount, amount_paid, payment_type)
-VALUES ($1, $2, $3, $4)
-RETURNING id, shop_id, sale_date, total_amount, amount_paid, payment_type, created_by, created_at
+const cancelSale = `-- name: CancelSale :one
+UPDATE sales
+SET status = 'CANCELLED', cancelled_reason = $3, cancelled_by = $4, cancelled_at = now()
+WHERE id = $1 AND company_id = $2 AND status = 'COMPLETED'
+RETURNING id, company_id, bill_number, shop_id, sale_date, total_amount, amount_paid, payment_type, status, cancelled_reason, cancelled_by, cancelled_at, created_by, created_at
 `
 
-type CreateSaleParams struct {
-	ShopID      int32
-	TotalAmount pgtype.Numeric
-	AmountPaid  pgtype.Numeric
-	PaymentType string
+type CancelSaleParams struct {
+	ID              int32
+	CompanyID       int32
+	CancelledReason pgtype.Text
+	CancelledBy     pgtype.Int4
 }
 
-func (q *Queries) CreateSale(ctx context.Context, arg CreateSaleParams) (Sale, error) {
-	row := q.db.QueryRow(ctx, createSale,
-		arg.ShopID,
-		arg.TotalAmount,
-		arg.AmountPaid,
-		arg.PaymentType,
+func (q *Queries) CancelSale(ctx context.Context, arg CancelSaleParams) (Sale, error) {
+	row := q.db.QueryRow(ctx, cancelSale,
+		arg.ID,
+		arg.CompanyID,
+		arg.CancelledReason,
+		arg.CancelledBy,
 	)
 	var i Sale
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
+		&i.BillNumber,
 		&i.ShopID,
 		&i.SaleDate,
 		&i.TotalAmount,
 		&i.AmountPaid,
 		&i.PaymentType,
+		&i.Status,
+		&i.CancelledReason,
+		&i.CancelledBy,
+		&i.CancelledAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createSale = `-- name: CreateSale :one
+INSERT INTO sales (company_id, bill_number, shop_id, total_amount, amount_paid, payment_type, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, company_id, bill_number, shop_id, sale_date, total_amount, amount_paid, payment_type, status, cancelled_reason, cancelled_by, cancelled_at, created_by, created_at
+`
+
+type CreateSaleParams struct {
+	CompanyID   int32
+	BillNumber  string
+	ShopID      int32
+	TotalAmount pgtype.Numeric
+	AmountPaid  pgtype.Numeric
+	PaymentType string
+	CreatedBy   pgtype.Int4
+}
+
+func (q *Queries) CreateSale(ctx context.Context, arg CreateSaleParams) (Sale, error) {
+	row := q.db.QueryRow(ctx, createSale,
+		arg.CompanyID,
+		arg.BillNumber,
+		arg.ShopID,
+		arg.TotalAmount,
+		arg.AmountPaid,
+		arg.PaymentType,
+		arg.CreatedBy,
+	)
+	var i Sale
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.BillNumber,
+		&i.ShopID,
+		&i.SaleDate,
+		&i.TotalAmount,
+		&i.AmountPaid,
+		&i.PaymentType,
+		&i.Status,
+		&i.CancelledReason,
+		&i.CancelledBy,
+		&i.CancelledAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
 	)
@@ -46,35 +99,41 @@ func (q *Queries) CreateSale(ctx context.Context, arg CreateSaleParams) (Sale, e
 }
 
 const createSaleItem = `-- name: CreateSaleItem :one
-INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, line_total)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, sale_id, product_id, quantity, unit_price, line_total
+INSERT INTO sale_items (sale_id, product_id, unit, quantity, unit_price, line_total, below_cost)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, sale_id, product_id, unit, quantity, unit_price, line_total, below_cost
 `
 
 type CreateSaleItemParams struct {
 	SaleID    int32
 	ProductID int32
+	Unit      string
 	Quantity  pgtype.Numeric
 	UnitPrice pgtype.Numeric
 	LineTotal pgtype.Numeric
+	BelowCost bool
 }
 
 func (q *Queries) CreateSaleItem(ctx context.Context, arg CreateSaleItemParams) (SaleItem, error) {
 	row := q.db.QueryRow(ctx, createSaleItem,
 		arg.SaleID,
 		arg.ProductID,
+		arg.Unit,
 		arg.Quantity,
 		arg.UnitPrice,
 		arg.LineTotal,
+		arg.BelowCost,
 	)
 	var i SaleItem
 	err := row.Scan(
 		&i.ID,
 		&i.SaleID,
 		&i.ProductID,
+		&i.Unit,
 		&i.Quantity,
 		&i.UnitPrice,
 		&i.LineTotal,
+		&i.BelowCost,
 	)
 	return i, err
 }
@@ -83,7 +142,7 @@ const decrementProductStock = `-- name: DecrementProductStock :one
 UPDATE products
 SET current_stock = current_stock - $2
 WHERE id = $1 AND current_stock >= $2
-RETURNING id, name, unit, purchase_price, selling_price, current_stock, created_at
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at
 `
 
 type DecrementProductStockParams struct {
@@ -96,19 +155,93 @@ func (q *Queries) DecrementProductStock(ctx context.Context, arg DecrementProduc
 	var i Product
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
+		&i.Sku,
 		&i.Unit,
-		&i.PurchasePrice,
-		&i.SellingPrice,
+		&i.CategoryID,
+		&i.SubcategoryID,
+		&i.CurrentSellingPrice,
 		&i.CurrentStock,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
+const getSaleByID = `-- name: GetSaleByID :one
+SELECT s.id, s.company_id, s.bill_number, s.shop_id, sh.name AS shop_name, sh.primary_phone AS shop_phone,
+       s.sale_date, s.total_amount, s.amount_paid, s.payment_type, s.status,
+       s.cancelled_reason, s.cancelled_by, s.cancelled_at, s.created_by, s.created_at
+FROM sales s
+JOIN shops sh ON sh.id = s.shop_id
+WHERE s.id = $1 AND s.company_id = $2
+`
+
+type GetSaleByIDParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+type GetSaleByIDRow struct {
+	ID              int32
+	CompanyID       int32
+	BillNumber      string
+	ShopID          int32
+	ShopName        string
+	ShopPhone       string
+	SaleDate        pgtype.Date
+	TotalAmount     pgtype.Numeric
+	AmountPaid      pgtype.Numeric
+	PaymentType     string
+	Status          string
+	CancelledReason pgtype.Text
+	CancelledBy     pgtype.Int4
+	CancelledAt     pgtype.Timestamptz
+	CreatedBy       pgtype.Int4
+	CreatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) GetSaleByID(ctx context.Context, arg GetSaleByIDParams) (GetSaleByIDRow, error) {
+	row := q.db.QueryRow(ctx, getSaleByID, arg.ID, arg.CompanyID)
+	var i GetSaleByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.BillNumber,
+		&i.ShopID,
+		&i.ShopName,
+		&i.ShopPhone,
+		&i.SaleDate,
+		&i.TotalAmount,
+		&i.AmountPaid,
+		&i.PaymentType,
+		&i.Status,
+		&i.CancelledReason,
+		&i.CancelledBy,
+		&i.CancelledAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const incrementProductStockUnchecked = `-- name: IncrementProductStockUnchecked :exec
+UPDATE products SET current_stock = current_stock + $2 WHERE id = $1
+`
+
+type IncrementProductStockUncheckedParams struct {
+	ID           int32
+	CurrentStock pgtype.Numeric
+}
+
+func (q *Queries) IncrementProductStockUnchecked(ctx context.Context, arg IncrementProductStockUncheckedParams) error {
+	_, err := q.db.Exec(ctx, incrementProductStockUnchecked, arg.ID, arg.CurrentStock)
+	return err
+}
+
 const listSaleItems = `-- name: ListSaleItems :many
-SELECT si.id, si.sale_id, si.product_id, pr.name AS product_name,
-       si.quantity, si.unit_price, si.line_total
+SELECT si.id, si.sale_id, si.product_id, pr.name AS product_name, pr.sku AS product_sku,
+       si.unit, si.quantity, si.unit_price, si.line_total, si.below_cost
 FROM sale_items si
 JOIN products pr ON pr.id = si.product_id
 WHERE si.sale_id = $1
@@ -119,9 +252,12 @@ type ListSaleItemsRow struct {
 	SaleID      int32
 	ProductID   int32
 	ProductName string
+	ProductSku  string
+	Unit        string
 	Quantity    pgtype.Numeric
 	UnitPrice   pgtype.Numeric
 	LineTotal   pgtype.Numeric
+	BelowCost   bool
 }
 
 func (q *Queries) ListSaleItems(ctx context.Context, saleID int32) ([]ListSaleItemsRow, error) {
@@ -138,9 +274,12 @@ func (q *Queries) ListSaleItems(ctx context.Context, saleID int32) ([]ListSaleIt
 			&i.SaleID,
 			&i.ProductID,
 			&i.ProductName,
+			&i.ProductSku,
+			&i.Unit,
 			&i.Quantity,
 			&i.UnitPrice,
 			&i.LineTotal,
+			&i.BelowCost,
 		); err != nil {
 			return nil, err
 		}
@@ -153,25 +292,30 @@ func (q *Queries) ListSaleItems(ctx context.Context, saleID int32) ([]ListSaleIt
 }
 
 const listSales = `-- name: ListSales :many
-SELECT s.id, s.shop_id, sh.name AS shop_name, s.sale_date, s.total_amount, s.amount_paid, s.payment_type, s.created_at
+SELECT s.id, s.company_id, s.bill_number, s.shop_id, sh.name AS shop_name, s.sale_date, s.total_amount,
+       s.amount_paid, s.payment_type, s.status, s.created_at
 FROM sales s
 JOIN shops sh ON sh.id = s.shop_id
+WHERE s.company_id = $1
 ORDER BY s.sale_date DESC, s.id DESC
 `
 
 type ListSalesRow struct {
 	ID          int32
+	CompanyID   int32
+	BillNumber  string
 	ShopID      int32
 	ShopName    string
 	SaleDate    pgtype.Date
 	TotalAmount pgtype.Numeric
 	AmountPaid  pgtype.Numeric
 	PaymentType string
+	Status      string
 	CreatedAt   pgtype.Timestamptz
 }
 
-func (q *Queries) ListSales(ctx context.Context) ([]ListSalesRow, error) {
-	rows, err := q.db.Query(ctx, listSales)
+func (q *Queries) ListSales(ctx context.Context, companyID int32) ([]ListSalesRow, error) {
+	rows, err := q.db.Query(ctx, listSales, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -181,12 +325,15 @@ func (q *Queries) ListSales(ctx context.Context) ([]ListSalesRow, error) {
 		var i ListSalesRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.CompanyID,
+			&i.BillNumber,
 			&i.ShopID,
 			&i.ShopName,
 			&i.SaleDate,
 			&i.TotalAmount,
 			&i.AmountPaid,
 			&i.PaymentType,
+			&i.Status,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
