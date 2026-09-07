@@ -83,3 +83,9 @@ h1, h2, h3, .font-display {
     @apply inline-flex items-center font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-sm border font-semibold text-slate border-line bg-white;
   }
 }
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

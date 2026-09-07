@@ -148,6 +148,7 @@ func main() {
 				r.Get("/{id}/items", purchaseHandler.GetItems)
 				r.With(appMiddleware.RequirePurchaseAccess()).Post("/bills/{id}/cancel", purchaseHandler.Cancel)
 			})
+			r.Get("/api/purchases/bills/{id}", billHandler.PurchaseDetail)
 			r.Get("/api/purchases/bills/{id}/pdf", billHandler.PurchasePDF)
 
 			r.Route("/api/sales", func(r chi.Router) {
@@ -156,6 +157,7 @@ func main() {
 				r.Get("/{id}/items", saleHandler.GetItems)
 				r.With(appMiddleware.RequireSalesAccess()).Post("/bills/{id}/cancel", saleHandler.Cancel)
 			})
+			r.Get("/api/sales/bills/{id}", billHandler.SaleDetail)
 			r.Get("/api/sales/bills/{id}/pdf", billHandler.SalePDF)
 
 			r.Route("/api/payments", func(r chi.Router) {

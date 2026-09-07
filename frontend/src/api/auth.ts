@@ -1,9 +1,16 @@
 const API_BASE = "/api/auth"
 
+export type UserType = "SUPER_ADMIN" | "COMPANY_ADMIN" | "STAFF"
+
 export interface User {
   id: number
   name: string
-  role: string
+  username: string
+  user_type: UserType
+  company_id: number | null
+  purchase_access: boolean
+  sales_access: boolean
+  sales_below_cost_approve: boolean
 }
 
 export async function login(username: string, password: string): Promise<User> {

@@ -4,7 +4,8 @@ export interface Shop {
   ID: number
   Name: string
   OwnerName: string | null
-  Phone: string | null
+  PrimaryPhone: string
+  SecondaryPhone: string | null
   Area: string | null
   OpeningBalance: string
   CreatedAt: string
@@ -13,7 +14,8 @@ export interface Shop {
 export interface ShopInput {
   name: string
   owner_name: string
-  phone: string
+  primary_phone: string
+  secondary_phone: string
   area: string
   opening_balance: number
 }
@@ -31,7 +33,7 @@ export async function createShop(input: ShopInput): Promise<Shop> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   })
-  if (!res.ok) throw new Error("Failed to create shop")
+  if (!res.ok) throw new Error(await res.text() || "Failed to create shop")
   return res.json()
 }
 

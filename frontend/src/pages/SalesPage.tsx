@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react"
 import { Plus, X } from "lucide-react"
+import { Link } from "react-router-dom"
 import { listSales, createSale, type Sale } from "../api/sales"
 import { listShops, type Shop } from "../api/shops"
-import { listProducts, type Product } from "../api/products"
+import { listProducts, getProductCost, type Product } from "../api/products"
 
 interface LineItem {
   product_id: number
   quantity: string
   unit_price: string
+  cost: number | null
 }
 
 function SalesPage() {
@@ -21,7 +23,7 @@ function SalesPage() {
   const [shopId, setShopId] = useState("")
   const [paymentType, setPaymentType] = useState<"cash" | "credit">("cash")
   const [amountPaid, setAmountPaid] = useState("")
-  const [items, setItems] = useState<LineItem[]>([{ product_id: 0, quantity: "", unit_price: "" }])
+  const [items, setItems] = useState<LineItem[]>([{ product_id: 0, quantity: "", unit_price: "", cost: null }])
 
   async function loadAll() {
     try {
@@ -37,14 +39,25 @@ function SalesPage() {
 
   useEffect(() => { loadAll() }, [])
 
-  function addItemRow() { setItems([...items, { product_id: 0, quantity: "", unit_price: "" }]) }
+  function addItemRow() { setItems([...items, { product_id: 0, quantity: "", unit_price: "", cost: null }]) }
   function removeItemRow(index: number) { setItems(items.filter((_, i) => i !== index)) }
-  function updateItem(index: number, field: keyof LineItem, value: string | number) {
+  async function updateItem(index: number, field: keyof LineItem, value: string | number) {
     const updated = [...items]
-    updated[index] = { ...updated[index], [field]: value }
+    updated[index] = { ...updated[index], [field]: value } as LineItem
     if (field === "product_id") {
       const product = products.find((p) => p.ID === value)
-      if (product) updated[index].unit_price = product.SellingPrice
+      if (product) updated[index].unit_price = product.CurrentSellingPrice
+      updated[index].cost = null
+      setItems(updated)
+      if (value) {
+        const cost = await getProductCost(value as number)
+        setItems((prev) => {
+          const next = [...prev]
+          if (next[index]) next[index] = { ...next[index], cost }
+          return next
+        })
+      }
+      return
     }
     setItems(updated)
   }
@@ -79,7 +92,7 @@ function SalesPage() {
         })),
       })
       setShopId(""); setPaymentType("cash"); setAmountPaid("")
-      setItems([{ product_id: 0, quantity: "", unit_price: "" }])
+      setItems([{ product_id: 0, quantity: "", unit_price: "", cost: null }])
       loadAll()
     } catch (err: any) {
       setFormError(err.message || "Failed to create sale")
@@ -92,7 +105,7 @@ function SalesPage() {
       <p className="eyebrow mb-6">Stock out to shops</p>
 
       <form onSubmit={handleSubmit} className="card p-6 mb-8">
-        <div className="grid grid-cols-3 gap-3 mb-5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
           <select className="input-field" value={shopId} onChange={(e) => setShopId(e.target.value)}>
             <option value="">Select shop</option>
             {shops.map((s) => <option key={s.ID} value={s.ID}>{s.Name}</option>)}
@@ -112,16 +125,18 @@ function SalesPage() {
             const available = stockFor(item.product_id)
             const requested = parseFloat(item.quantity) || 0
             const exceedsStock = item.product_id !== 0 && requested > available
+            const price = parseFloat(item.unit_price) || 0
+            const belowCost = item.cost !== null && price > 0 && price < item.cost
             return (
               <div key={index} className="mb-2">
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <select className="input-field col-span-2" value={item.product_id} onChange={(e) => updateItem(index, "product_id", parseInt(e.target.value))}>
                     <option value={0}>Select product</option>
                     {products.map((p) => <option key={p.ID} value={p.ID}>{p.Name} (stock: {p.CurrentStock})</option>)}
                   </select>
                   <input className={`input-field mono-num ${exceedsStock ? "border-red" : ""}`} placeholder="Quantity" type="number" step="0.001" value={item.quantity} onChange={(e) => updateItem(index, "quantity", e.target.value)} />
                   <div className="flex gap-2">
-                    <input className="input-field mono-num flex-1" placeholder="Unit price" type="number" step="0.01" value={item.unit_price} onChange={(e) => updateItem(index, "unit_price", e.target.value)} />
+                    <input className={`input-field mono-num flex-1 ${belowCost ? "border-red" : ""}`} placeholder="Unit price" type="number" step="0.01" value={item.unit_price} onChange={(e) => updateItem(index, "unit_price", e.target.value)} />
                     {items.length > 1 && (
                       <button type="button" onClick={() => removeItemRow(index)} className="text-red hover:opacity-70 px-1">
                         <X size={16} />
@@ -130,6 +145,11 @@ function SalesPage() {
                   </div>
                 </div>
                 {exceedsStock && <p className="stamp-red mt-1">Only {available} in stock</p>}
+                {belowCost && (
+                  <p className="stamp-red mt-1">
+                    WARNING: selling price ₹{price.toFixed(2)} is below cost ₹{item.cost!.toFixed(2)}. This sale may result in a loss and requires below-cost approval.
+                  </p>
+                )}
               </div>
             )
           })}
@@ -150,15 +170,16 @@ function SalesPage() {
       {error && <p className="stamp-red">{error}</p>}
 
       {!loading && !error && (
-        <div className="card overflow-hidden">
+        <div className="card overflow-hidden overflow-x-auto">
           <div className="card-header"><h2 className="font-display font-semibold">Sales History</h2></div>
           <table className="table-base">
             <thead>
-              <tr><th>Date</th><th>Shop</th><th>Type</th><th className="text-right">Total</th><th className="text-right">Paid</th></tr>
+              <tr><th>Bill No.</th><th>Date</th><th>Shop</th><th>Type</th><th className="text-right">Total</th><th className="text-right">Paid</th><th>Status</th><th></th></tr>
             </thead>
             <tbody>
               {sales.map((s) => (
                 <tr key={s.ID}>
+                  <td className="mono-num text-slate">{s.BillNumber}</td>
                   <td className="mono-num text-slate">{s.SaleDate}</td>
                   <td className="font-medium">{s.ShopName}</td>
                   <td>
@@ -166,10 +187,14 @@ function SalesPage() {
                   </td>
                   <td className="mono-num text-right">₹{s.TotalAmount}</td>
                   <td className="mono-num text-right text-green">₹{s.AmountPaid}</td>
+                  <td><span className={s.Status === "CANCELLED" ? "stamp-red" : "stamp-green"}>{s.Status}</span></td>
+                  <td className="text-right">
+                    <Link to={`/sales/${s.ID}/bill`} className="btn-ghost">View Bill</Link>
+                  </td>
                 </tr>
               ))}
               {sales.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate">No sales yet.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate">No sales yet.</td></tr>
               )}
             </tbody>
           </table>

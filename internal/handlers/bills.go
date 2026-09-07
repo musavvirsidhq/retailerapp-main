@@ -25,27 +25,19 @@ func (h *BillHandler) writePDF(w http.ResponseWriter, filename string, bytes_ []
 	w.Write(bytes_)
 }
 
-func (h *BillHandler) SalePDF(w http.ResponseWriter, r *http.Request) {
+func (h *BillHandler) loadSaleBill(r *http.Request, id int32) (billpdf.BillData, string, error) {
 	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
-	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	sale, err := h.Queries.GetSaleByID(r.Context(), db.GetSaleByIDParams{ID: id, CompanyID: companyID})
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
-		return
-	}
-	sale, err := h.Queries.GetSaleByID(r.Context(), db.GetSaleByIDParams{ID: int32(id), CompanyID: companyID})
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+		return billpdf.BillData{}, "", err
 	}
 	items, err := h.Queries.ListSaleItems(r.Context(), sale.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return billpdf.BillData{}, "", err
 	}
 	company, err := h.Queries.GetCompanyByID(r.Context(), companyID)
 	if err != nil {
-		http.Error(w, "company not found", http.StatusInternalServerError)
-		return
+		return billpdf.BillData{}, "", err
 	}
 
 	data := billpdf.BillData{
@@ -72,36 +64,22 @@ func (h *BillHandler) SalePDF(w http.ResponseWriter, r *http.Request) {
 			BelowCost:   item.BelowCost,
 		})
 	}
-
-	out, err := billpdf.Generate(data)
-	if err != nil {
-		http.Error(w, "failed to generate PDF: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.writePDF(w, sale.BillNumber, out)
+	return data, sale.BillNumber, nil
 }
 
-func (h *BillHandler) PurchasePDF(w http.ResponseWriter, r *http.Request) {
+func (h *BillHandler) loadPurchaseBill(r *http.Request, id int32) (billpdf.BillData, string, error) {
 	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
-	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	purchase, err := h.Queries.GetPurchaseByID(r.Context(), db.GetPurchaseByIDParams{ID: id, CompanyID: companyID})
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
-		return
-	}
-	purchase, err := h.Queries.GetPurchaseByID(r.Context(), db.GetPurchaseByIDParams{ID: int32(id), CompanyID: companyID})
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+		return billpdf.BillData{}, "", err
 	}
 	items, err := h.Queries.ListPurchaseItems(r.Context(), purchase.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return billpdf.BillData{}, "", err
 	}
 	company, err := h.Queries.GetCompanyByID(r.Context(), companyID)
 	if err != nil {
-		http.Error(w, "company not found", http.StatusInternalServerError)
-		return
+		return billpdf.BillData{}, "", err
 	}
 
 	data := billpdf.BillData{
@@ -127,11 +105,73 @@ func (h *BillHandler) PurchasePDF(w http.ResponseWriter, r *http.Request) {
 			LineTotal:   numericToFloat(item.LineTotal),
 		})
 	}
+	return data, purchase.BillNumber, nil
+}
 
+// SaleDetail returns the sale bill as JSON (GET /api/sales/bills/{id}) for the on-screen bill view.
+func (h *BillHandler) SaleDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	data, _, err := h.loadSaleBill(r, int32(id))
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, data)
+}
+
+// PurchaseDetail returns the purchase bill as JSON (GET /api/purchases/bills/{id}).
+func (h *BillHandler) PurchaseDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	data, _, err := h.loadPurchaseBill(r, int32(id))
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, data)
+}
+
+func (h *BillHandler) SalePDF(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	data, billNumber, err := h.loadSaleBill(r, int32(id))
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	out, err := billpdf.Generate(data)
 	if err != nil {
 		http.Error(w, "failed to generate PDF: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.writePDF(w, purchase.BillNumber, out)
+	h.writePDF(w, billNumber, out)
+}
+
+func (h *BillHandler) PurchasePDF(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	data, billNumber, err := h.loadPurchaseBill(r, int32(id))
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	out, err := billpdf.Generate(data)
+	if err != nil {
+		http.Error(w, "failed to generate PDF: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.writePDF(w, billNumber, out)
 }

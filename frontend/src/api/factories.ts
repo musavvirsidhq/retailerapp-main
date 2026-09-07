@@ -4,7 +4,8 @@ export interface Factory {
   ID: number
   Name: string
   ContactPerson: string | null
-  Phone: string | null
+  PrimaryPhone: string
+  SecondaryPhone: string | null
   Address: string | null
   CreatedAt: string
 }
@@ -12,7 +13,8 @@ export interface Factory {
 export interface FactoryInput {
   name: string
   contact_person: string
-  phone: string
+  primary_phone: string
+  secondary_phone: string
   address: string
 }
 
@@ -29,7 +31,7 @@ export async function createFactory(input: FactoryInput): Promise<Factory> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   })
-  if (!res.ok) throw new Error("Failed to create factory")
+  if (!res.ok) throw new Error(await res.text() || "Failed to create factory")
   return res.json()
 }
 

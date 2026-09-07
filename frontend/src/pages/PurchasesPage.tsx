@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { Plus, X } from "lucide-react"
+import { Link } from "react-router-dom"
 import { listPurchases, createPurchase, type Purchase } from "../api/purchases"
 import { listFactories, type Factory } from "../api/factories"
 import { listProducts, type Product } from "../api/products"
@@ -8,6 +9,7 @@ interface LineItem {
   product_id: number
   quantity: string
   unit_price: string
+  new_selling_price: string
 }
 
 function PurchasesPage() {
@@ -16,11 +18,12 @@ function PurchasesPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [formError, setFormError] = useState("")
 
   const [factoryId, setFactoryId] = useState("")
   const [invoiceNo, setInvoiceNo] = useState("")
   const [amountPaid, setAmountPaid] = useState("")
-  const [items, setItems] = useState<LineItem[]>([{ product_id: 0, quantity: "", unit_price: "" }])
+  const [items, setItems] = useState<LineItem[]>([{ product_id: 0, quantity: "", unit_price: "", new_selling_price: "" }])
 
   async function loadAll() {
     try {
@@ -39,7 +42,7 @@ function PurchasesPage() {
   useEffect(() => { loadAll() }, [])
 
   function addItemRow() {
-    setItems([...items, { product_id: 0, quantity: "", unit_price: "" }])
+    setItems([...items, { product_id: 0, quantity: "", unit_price: "", new_selling_price: "" }])
   }
   function removeItemRow(index: number) {
     setItems(items.filter((_, i) => i !== index))
@@ -58,24 +61,35 @@ function PurchasesPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!factoryId) { alert("Please select a factory"); return }
+    setFormError("")
+    if (!factoryId) { setFormError("Please select a factory"); return }
     const validItems = items.filter((i) => i.product_id && i.quantity && i.unit_price)
-    if (validItems.length === 0) { alert("Add at least one valid product line"); return }
+    if (validItems.length === 0) { setFormError("Add at least one valid product line"); return }
 
-    await createPurchase({
-      factory_id: parseInt(factoryId),
-      invoice_no: invoiceNo,
-      amount_paid: parseFloat(amountPaid) || 0,
-      items: validItems.map((i) => ({
-        product_id: i.product_id,
-        quantity: parseFloat(i.quantity),
-        unit_price: parseFloat(i.unit_price),
-      })),
-    })
+    const newSellingPrice: Record<number, number> = {}
+    for (const i of validItems) {
+      if (i.new_selling_price) newSellingPrice[i.product_id] = parseFloat(i.new_selling_price)
+    }
 
-    setFactoryId(""); setInvoiceNo(""); setAmountPaid("")
-    setItems([{ product_id: 0, quantity: "", unit_price: "" }])
-    loadAll()
+    try {
+      await createPurchase({
+        factory_id: parseInt(factoryId),
+        invoice_no: invoiceNo,
+        amount_paid: parseFloat(amountPaid) || 0,
+        items: validItems.map((i) => ({
+          product_id: i.product_id,
+          quantity: parseFloat(i.quantity),
+          unit_price: parseFloat(i.unit_price),
+        })),
+        new_selling_price: Object.keys(newSellingPrice).length > 0 ? newSellingPrice : undefined,
+      })
+
+      setFactoryId(""); setInvoiceNo(""); setAmountPaid("")
+      setItems([{ product_id: 0, quantity: "", unit_price: "", new_selling_price: "" }])
+      loadAll()
+    } catch (err: any) {
+      setFormError(err.message || "Failed to create purchase")
+    }
   }
 
   return (
@@ -84,7 +98,7 @@ function PurchasesPage() {
       <p className="eyebrow mb-6">Stock in from factories</p>
 
       <form onSubmit={handleSubmit} className="card p-6 mb-8">
-        <div className="grid grid-cols-3 gap-3 mb-5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
           <select className="input-field" value={factoryId} onChange={(e) => setFactoryId(e.target.value)}>
             <option value="">Select factory</option>
             {factories.map((f) => <option key={f.ID} value={f.ID}>{f.Name}</option>)}
@@ -96,14 +110,15 @@ function PurchasesPage() {
         <div className="border-t border-line pt-4">
           <h3 className="eyebrow mb-3">Products</h3>
           {items.map((item, index) => (
-            <div key={index} className="grid grid-cols-4 gap-2 mb-2">
+            <div key={index} className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-2">
               <select className="input-field col-span-2" value={item.product_id} onChange={(e) => updateItem(index, "product_id", parseInt(e.target.value))}>
                 <option value={0}>Select product</option>
                 {products.map((p) => <option key={p.ID} value={p.ID}>{p.Name}</option>)}
               </select>
               <input className="input-field mono-num" placeholder="Quantity" type="number" step="0.001" value={item.quantity} onChange={(e) => updateItem(index, "quantity", e.target.value)} />
+              <input className="input-field mono-num" placeholder="Buying price" type="number" step="0.01" value={item.unit_price} onChange={(e) => updateItem(index, "unit_price", e.target.value)} />
               <div className="flex gap-2">
-                <input className="input-field mono-num flex-1" placeholder="Unit price" type="number" step="0.01" value={item.unit_price} onChange={(e) => updateItem(index, "unit_price", e.target.value)} />
+                <input className="input-field mono-num flex-1" placeholder="New selling price (optional)" type="number" step="0.01" value={item.new_selling_price} onChange={(e) => updateItem(index, "new_selling_price", e.target.value)} />
                 {items.length > 1 && (
                   <button type="button" onClick={() => removeItemRow(index)} className="text-red hover:opacity-70 px-1">
                     <X size={16} />
@@ -117,6 +132,8 @@ function PurchasesPage() {
           </button>
         </div>
 
+        {formError && <p className="stamp-red mt-3">{formError}</p>}
+
         <div className="flex justify-between items-center mt-6 pt-5 border-t border-line">
           <p className="font-display font-semibold text-lg">
             Total: <span className="mono-num">₹{total.toFixed(2)}</span>
@@ -129,27 +146,32 @@ function PurchasesPage() {
       {error && <p className="stamp-red">{error}</p>}
 
       {!loading && !error && (
-        <div className="card overflow-hidden">
+        <div className="card overflow-hidden overflow-x-auto">
           <div className="card-header"><h2 className="font-display font-semibold">Purchase History</h2></div>
           <table className="table-base">
             <thead>
               <tr>
-                <th>Date</th><th>Factory</th><th>Invoice No</th>
-                <th className="text-right">Total</th><th className="text-right">Paid</th>
+                <th>Bill No.</th><th>Date</th><th>Factory</th><th>Invoice No</th>
+                <th className="text-right">Total</th><th className="text-right">Paid</th><th>Status</th><th></th>
               </tr>
             </thead>
             <tbody>
               {purchases.map((p) => (
                 <tr key={p.ID}>
+                  <td className="mono-num text-slate">{p.BillNumber}</td>
                   <td className="mono-num text-slate">{p.PurchaseDate}</td>
                   <td>{p.FactoryName}</td>
                   <td className="text-slate">{p.InvoiceNo || "-"}</td>
                   <td className="mono-num text-right">₹{p.TotalAmount}</td>
                   <td className="mono-num text-right text-green">₹{p.AmountPaid}</td>
+                  <td><span className={p.Status === "CANCELLED" ? "stamp-red" : "stamp-green"}>{p.Status}</span></td>
+                  <td className="text-right">
+                    <Link to={`/purchases/${p.ID}/bill`} className="btn-ghost">View Bill</Link>
+                  </td>
                 </tr>
               ))}
               {purchases.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate">No purchases yet.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate">No purchases yet.</td></tr>
               )}
             </tbody>
           </table>
