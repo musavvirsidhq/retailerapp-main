@@ -113,10 +113,11 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(appMiddleware.RequireActiveSubscription(subscriptionLookup))
 
-			r.Route("/api/categories", func(r chi.Router) {
-				r.Post("/", categoryHandler.Create)
-				r.Post("/{id}/subcategories", categoryHandler.CreateSubcategory)
-			})
+			// Registered as plain Posts (not r.Route, which would mount a sub-router at
+			// "/api/categories" and clobber the plain GET already registered above for the
+			// same exact path, turning it into a 405).
+			r.Post("/api/categories", categoryHandler.Create)
+			r.Post("/api/categories/{id}/subcategories", categoryHandler.CreateSubcategory)
 
 			r.Route("/api/products", func(r chi.Router) {
 				r.Get("/", productHandler.List)
