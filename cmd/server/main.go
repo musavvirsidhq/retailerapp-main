@@ -92,10 +92,19 @@ func main() {
 		r.Use(appMiddleware.RequireAuth(store))
 
 		r.Get("/api/units", unitHandler.List)
-		r.Get("/api/categories", categoryHandler.List)
-		r.Get("/api/categories/{id}/subcategories", categoryHandler.ListSubcategories)
 		r.Get("/api/products/{id}/cost", productHandler.CurrentCost)
 		r.Get("/api/company/subscription-status", companyHandler.SubscriptionStatus)
+
+		// GET needs no subscription check; only the writes are gated via r.With(...) so this
+		// stays a single Route mount (splitting GET/POST across a bare r.Get in this group and
+		// an r.Route in the subscription-gated group below previously caused the Route mount
+		// to clobber the bare GET, turning it into a 405 - see git history).
+		r.Route("/api/categories", func(r chi.Router) {
+			r.Get("/", categoryHandler.List)
+			r.With(appMiddleware.RequireActiveSubscription(subscriptionLookup)).Post("/", categoryHandler.Create)
+			r.Get("/{id}/subcategories", categoryHandler.ListSubcategories)
+			r.With(appMiddleware.RequireActiveSubscription(subscriptionLookup)).Post("/{id}/subcategories", categoryHandler.CreateSubcategory)
+		})
 
 		// Super Admin: platform-level company/subscription management
 		r.Group(func(r chi.Router) {
@@ -112,12 +121,6 @@ func main() {
 		// Company-scoped routes: require an active (non-expired) subscription for writes.
 		r.Group(func(r chi.Router) {
 			r.Use(appMiddleware.RequireActiveSubscription(subscriptionLookup))
-
-			// Registered as plain Posts (not r.Route, which would mount a sub-router at
-			// "/api/categories" and clobber the plain GET already registered above for the
-			// same exact path, turning it into a 405).
-			r.Post("/api/categories", categoryHandler.Create)
-			r.Post("/api/categories/{id}/subcategories", categoryHandler.CreateSubcategory)
 
 			r.Route("/api/products", func(r chi.Router) {
 				r.Get("/", productHandler.List)
