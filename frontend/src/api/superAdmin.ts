@@ -33,48 +33,55 @@ export interface CreateCompanyInput {
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(await res.text() || "Request failed")
-  return res.json()
+  return (await res.json()) as T
 }
 
-export function listCompanies(): Promise<Company[]> {
-  return fetch(API_BASE, { credentials: "include" }).then(handle)
+export async function listCompanies(): Promise<Company[]> {
+  const res = await fetch(API_BASE, { credentials: "include" })
+  return handle<Company[]>(res)
 }
 
-export function getCompany(id: number): Promise<Company> {
-  return fetch(`${API_BASE}/${id}`, { credentials: "include" }).then(handle)
+export async function getCompany(id: number): Promise<Company> {
+  const res = await fetch(`${API_BASE}/${id}`, { credentials: "include" })
+  return handle<Company>(res)
 }
 
-export function createCompany(input: CreateCompanyInput): Promise<Company> {
-  return fetch(API_BASE, {
+export async function createCompany(input: CreateCompanyInput): Promise<Company> {
+  const res = await fetch(API_BASE, {
     credentials: "include",
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
-  }).then(handle)
+  })
+  return handle<Company>(res)
 }
 
-export function getSubscriptionHistory(companyId: number): Promise<Subscription[]> {
-  return fetch(`${API_BASE}/${companyId}/subscription`, { credentials: "include" }).then(handle)
+export async function getSubscriptionHistory(companyId: number): Promise<Subscription[]> {
+  const res = await fetch(`${API_BASE}/${companyId}/subscription`, { credentials: "include" })
+  return handle<Subscription[]>(res)
 }
 
-export function grantTrial(companyId: number): Promise<Subscription> {
-  return fetch(`${API_BASE}/${companyId}/trial`, { credentials: "include", method: "POST" }).then(handle)
+export async function grantTrial(companyId: number): Promise<Subscription> {
+  const res = await fetch(`${API_BASE}/${companyId}/trial`, { credentials: "include", method: "POST" })
+  return handle<Subscription>(res)
 }
 
-export function grantSubscription(companyId: number, subscriptionType: string, amount: number, months: number): Promise<Subscription> {
-  return fetch(`${API_BASE}/${companyId}/subscription`, {
+export async function grantSubscription(companyId: number, subscriptionType: string, amount: number, months: number): Promise<Subscription> {
+  const res = await fetch(`${API_BASE}/${companyId}/subscription`, {
     credentials: "include",
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ subscription_type: subscriptionType, amount, months }),
-  }).then(handle)
+  })
+  return handle<Subscription>(res)
 }
 
-export function extendSubscription(companyId: number, months: number, days: number, amount: number): Promise<Subscription> {
-  return fetch(`${API_BASE}/${companyId}/extend`, {
+export async function extendSubscription(companyId: number, months: number, days: number, amount: number): Promise<Subscription> {
+  const res = await fetch(`${API_BASE}/${companyId}/extend`, {
     credentials: "include",
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ months, days, amount }),
-  }).then(handle)
+  })
+  return handle<Subscription>(res)
 }
