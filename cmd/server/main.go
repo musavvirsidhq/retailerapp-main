@@ -31,6 +31,11 @@ func main() {
 		sessionKey = "dev-only-insecure-key-change-in-production"
 	}
 
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "uploads"
+	}
+
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		log.Fatalf("unable to connect to database: %v", err)
@@ -64,6 +69,9 @@ func main() {
 	superAdminHandler := handlers.NewSuperAdminHandler(queries, pool)
 	companyHandler := handlers.NewCompanyHandler(queries)
 	billHandler := handlers.NewBillHandler(queries)
+	productStorefrontHandler := handlers.NewProductStorefrontHandler(queries, pool, uploadsDir)
+	storefrontSettingsHandler := handlers.NewStorefrontSettingsHandler(queries)
+	publicStorefrontHandler := handlers.NewPublicStorefrontHandler(queries, pool)
 
 	// Looks up a company's current subscription status for RequireActiveSubscription without
 	// the middleware package depending on db directly.
@@ -86,6 +94,20 @@ func main() {
 	r.Post("/api/auth/login", authHandler.Login)
 	r.Post("/api/auth/logout", authHandler.Logout)
 	r.Get("/api/auth/me", authHandler.Me)
+
+	// Uploaded product photos, served straight off disk - these are meant to be publicly
+	// viewable (they show up on the storefront), so no auth is applied here.
+	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
+
+	// Public storefront: unauthenticated browse-and-order routes, scoped per company by its
+	// public company_code. Every company has the plumbing for one; today only companies that
+	// opt in via /api/company/storefront-settings actually resolve to anything here.
+	r.Route("/public/{companyCode}", func(r chi.Router) {
+		r.Get("/", publicStorefrontHandler.Info)
+		r.Get("/products", publicStorefrontHandler.ListProducts)
+		r.Get("/products/{id}", publicStorefrontHandler.GetProduct)
+		r.Post("/orders", publicStorefrontHandler.CreateOrder)
+	})
 
 	// Protected routes - require login
 	r.Group(func(r chi.Router) {
@@ -128,6 +150,14 @@ func main() {
 				r.Get("/{id}", productHandler.Get)
 				r.Put("/{id}", productHandler.Update)
 				r.Delete("/{id}", productHandler.Delete)
+
+				r.Get("/{id}/storefront", productStorefrontHandler.Details)
+				r.Put("/{id}/storefront", productStorefrontHandler.UpdateDetails)
+				r.Get("/{id}/images", productStorefrontHandler.ListImages)
+				r.Post("/{id}/images", productStorefrontHandler.UploadImage)
+				r.Delete("/{id}/images/{imageId}", productStorefrontHandler.DeleteImage)
+				r.Get("/{id}/pack-items", productStorefrontHandler.ListPackItems)
+				r.Put("/{id}/pack-items", productStorefrontHandler.SetPackItems)
 			})
 
 			r.Route("/api/factories", func(r chi.Router) {
@@ -185,6 +215,16 @@ func main() {
 					r.Post("/", companyHandler.CreateUser)
 					r.Put("/{id}/permissions", companyHandler.UpdatePermissions)
 					r.Put("/{id}/disable", companyHandler.DisableUser)
+				})
+
+				r.Route("/api/company/storefront-settings", func(r chi.Router) {
+					r.Get("/", storefrontSettingsHandler.Get)
+					r.Put("/", storefrontSettingsHandler.Update)
+				})
+				r.Route("/api/company/storefront-orders", func(r chi.Router) {
+					r.Get("/", storefrontSettingsHandler.ListOrders)
+					r.Get("/{id}/items", storefrontSettingsHandler.GetOrderItems)
+					r.Put("/{id}/status", storefrontSettingsHandler.UpdateOrderStatus)
 				})
 			})
 		})

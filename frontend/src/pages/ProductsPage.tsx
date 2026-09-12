@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react"
-import { Trash2, Plus } from "lucide-react"
+import { Trash2, Plus, Store } from "lucide-react"
 import { listProducts, createProduct, deleteProduct, type Product } from "../api/products"
 import { listUnits, type Unit } from "../api/units"
 import { listCategories, createCategory, listSubcategories, createSubcategory, type Category, type Subcategory } from "../api/categories"
+import ProductStorefrontModal from "../components/ProductStorefrontModal"
 
 function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([])
@@ -21,6 +22,7 @@ function ProductsPage() {
   const [sellingPrice, setSellingPrice] = useState("")
   const [newCategory, setNewCategory] = useState("")
   const [newSubcategory, setNewSubcategory] = useState("")
+  const [storefrontProduct, setStorefrontProduct] = useState<Product | null>(null)
 
   async function loadAll() {
     try {
@@ -158,9 +160,14 @@ function ProductsPage() {
                     </span>
                   </td>
                   <td className="text-right">
-                    <button onClick={() => handleDelete(p.ID)} className="text-slate hover:text-red transition-colors">
-                      <Trash2 size={15} />
-                    </button>
+                    <div className="flex items-center justify-end gap-3">
+                      <button onClick={() => setStorefrontProduct(p)} className="text-slate hover:text-amber transition-colors" title="Photos, description &amp; pack sizes">
+                        <Store size={15} />
+                      </button>
+                      <button onClick={() => handleDelete(p.ID)} className="text-slate hover:text-red transition-colors">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -170,6 +177,10 @@ function ProductsPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {storefrontProduct && (
+        <ProductStorefrontModal product={storefrontProduct} onClose={() => setStorefrontProduct(null)} />
       )}
     </div>
   )

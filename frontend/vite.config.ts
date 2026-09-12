@@ -9,6 +9,8 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
+      '/public': 'http://localhost:8080',
+      '/uploads': 'http://localhost:8080',
     },
   },
 })

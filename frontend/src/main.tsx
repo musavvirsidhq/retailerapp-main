@@ -17,6 +17,11 @@ import SaleBillPage from './pages/SaleBillPage.tsx'
 import PurchaseBillPage from './pages/PurchaseBillPage.tsx'
 import SuperAdminCompaniesPage from './pages/SuperAdminCompaniesPage.tsx'
 import CompanyUsersPage from './pages/CompanyUsersPage.tsx'
+import StorefrontSettingsPage from './pages/StorefrontSettingsPage.tsx'
+import StoreCatalogPage from './pages/store/StoreCatalogPage.tsx'
+import StoreProductPage from './pages/store/StoreProductPage.tsx'
+import StoreCartPage from './pages/store/StoreCartPage.tsx'
+import { StoreCartProvider } from './context/StoreCartContext.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -43,8 +48,35 @@ createRoot(document.getElementById('root')!).render(
             <Route path="purchases/:id/bill" element={<PurchaseBillPage />} />
             <Route path="payments" element={<PaymentsPage />} />
             <Route path="company/users" element={<CompanyUsersPage />} />
+            <Route path="company/storefront" element={<StorefrontSettingsPage />} />
             <Route path="super-admin/companies" element={<SuperAdminCompaniesPage />} />
           </Route>
+
+          {/* Public storefront - no login required */}
+          <Route
+            path="/store/:companyCode"
+            element={
+              <StoreCartProvider>
+                <StoreCatalogPage />
+              </StoreCartProvider>
+            }
+          />
+          <Route
+            path="/store/:companyCode/products/:id"
+            element={
+              <StoreCartProvider>
+                <StoreProductPage />
+              </StoreCartProvider>
+            }
+          />
+          <Route
+            path="/store/:companyCode/cart"
+            element={
+              <StoreCartProvider>
+                <StoreCartPage />
+              </StoreCartProvider>
+            }
+          />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

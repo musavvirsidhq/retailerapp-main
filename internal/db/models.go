@@ -48,6 +48,15 @@ type Company struct {
 	Version     int32
 }
 
+type CompanyStorefrontSetting struct {
+	CompanyID      int32
+	Enabled        bool
+	CodEnabled     bool
+	ContactEnabled bool
+	ContactPhone   pgtype.Text
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type Factory struct {
 	ID             int32
 	CompanyID      int32
@@ -83,6 +92,9 @@ type Product struct {
 	CurrentSellingPrice pgtype.Numeric
 	CurrentStock        pgtype.Numeric
 	CreatedAt           pgtype.Timestamptz
+	Description         pgtype.Text
+	IsBundle            bool
+	StorefrontVisible   bool
 }
 
 type ProductCostLayer struct {
@@ -96,6 +108,44 @@ type ProductCostLayer struct {
 	CreatedOn          pgtype.Timestamptz
 	CreatedBy          pgtype.Int4
 	Status             string
+}
+
+type ProductImage struct {
+	ID        int32
+	CompanyID int32
+	ProductID int32
+	Url       string
+	SortOrder int32
+	CreatedAt pgtype.Timestamptz
+}
+
+type ProductPackItem struct {
+	ID        int32
+	CompanyID int32
+	ProductID int32
+	Size      string
+	Quantity  int32
+}
+
+type PublicOrder struct {
+	ID                int32
+	CompanyID         int32
+	CustomerName      string
+	CustomerPhone     string
+	CustomerAddress   pgtype.Text
+	FulfillmentMethod string
+	Status            string
+	TotalAmount       pgtype.Numeric
+	CreatedAt         pgtype.Timestamptz
+}
+
+type PublicOrderItem struct {
+	ID        int32
+	OrderID   int32
+	ProductID int32
+	Quantity  int32
+	UnitPrice pgtype.Numeric
+	LineTotal pgtype.Numeric
 }
 
 type Purchase struct {

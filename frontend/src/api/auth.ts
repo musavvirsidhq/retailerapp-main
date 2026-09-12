@@ -8,6 +8,7 @@ export interface User {
   username: string
   user_type: UserType
   company_id: number | null
+  company_code: string | null
   purchase_access: boolean
   sales_access: boolean
   sales_below_cost_approve: boolean

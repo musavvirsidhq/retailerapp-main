@@ -2,7 +2,7 @@ import { useState } from "react"
 import { NavLink, Outlet, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard, Package, Factory, Store, PackagePlus,
-  ShoppingCart, Wallet, LogOut, Menu, X, Building2, Users,
+  ShoppingCart, Wallet, LogOut, Menu, X, Building2, Users, Globe,
 } from "lucide-react"
 import { useAuth } from "../context/AuthContext"
 import SubscriptionBanner from "./SubscriptionBanner"
@@ -19,6 +19,7 @@ const COMPANY_NAV_ITEMS = [
 
 const COMPANY_ADMIN_NAV_ITEMS = [
   { to: "/company/users", label: "Staff", icon: Users },
+  { to: "/company/storefront", label: "Storefront", icon: Globe },
 ]
 
 const SUPER_ADMIN_NAV_ITEMS = [

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The backend (see NetworkModule.BASE_URL) is currently served over plain HTTP at a bare IP,
+  so cleartext traffic has to be explicitly allowed for that one host. If you move the backend
+  behind HTTPS (recommended for production), delete this domain-config block entirely -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">13.215.157.19</domain>
+    </domain-config>
+</network-security-config>

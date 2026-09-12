@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -65,7 +66,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, h.userResponse(user))
+	writeJSON(w, h.userResponse(r.Context(), user))
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
@@ -91,10 +92,10 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, h.userResponse(user))
+	writeJSON(w, h.userResponse(r.Context(), user))
 }
 
-func (h *AuthHandler) userResponse(user db.User) map[string]interface{} {
+func (h *AuthHandler) userResponse(ctx context.Context, user db.User) map[string]interface{} {
 	resp := map[string]interface{}{
 		"id":                       user.ID,
 		"name":                     user.Name,
@@ -104,9 +105,15 @@ func (h *AuthHandler) userResponse(user db.User) map[string]interface{} {
 		"sales_access":             user.SalesAccess,
 		"sales_below_cost_approve": user.SalesBelowCostApprove,
 		"company_id":               nil,
+		"company_code":             nil,
 	}
 	if user.CompanyID.Valid {
 		resp["company_id"] = user.CompanyID.Int32
+		// Best-effort: only used by the admin UI to show a shareable storefront link, so a
+		// lookup failure shouldn't block login/me from returning the rest of the profile.
+		if company, err := h.Queries.GetCompanyByID(ctx, user.CompanyID.Int32); err == nil {
+			resp["company_code"] = company.CompanyCode
+		}
 	}
 	return resp
 }

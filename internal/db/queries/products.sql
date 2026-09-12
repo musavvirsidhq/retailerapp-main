@@ -21,3 +21,15 @@ RETURNING *;
 
 -- name: DeleteProduct :exec
 DELETE FROM products WHERE id = $1 AND company_id = $2;
+
+-- name: UpdateProductStorefront :one
+UPDATE products
+SET description = $3, is_bundle = $4, storefront_visible = $5
+WHERE id = $1 AND company_id = $2
+RETURNING *;
+
+-- name: ListStorefrontProducts :many
+SELECT * FROM products WHERE company_id = $1 AND storefront_visible = true ORDER BY name;
+
+-- name: GetStorefrontProduct :one
+SELECT * FROM products WHERE id = $1 AND company_id = $2 AND storefront_visible = true;
