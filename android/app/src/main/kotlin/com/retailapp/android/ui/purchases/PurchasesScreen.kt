@@ -69,7 +69,7 @@ fun PurchasesScreen(onOpenBill: (Int) -> Unit, viewModel: PurchasesViewModel = v
 
     Scaffold(
         floatingActionButton = {
-            if (Session.currentUser?.purchase_access == true) {
+            if (Session.canPurchase) {
                 FloatingActionButton(onClick = { showNewPurchase = true }) {
                     Icon(Icons.Default.Add, contentDescription = "New purchase")
                 }

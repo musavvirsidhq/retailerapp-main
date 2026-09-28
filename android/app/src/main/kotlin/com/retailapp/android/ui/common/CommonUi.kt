@@ -1,5 +1,6 @@
 package com.retailapp.android.ui.common
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +16,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import com.retailapp.android.R
 import androidx.compose.ui.unit.dp
+
+/**
+ * Draws the app icon very faintly, centered, behind [content] on every screen. Screens must
+ * leave their own container transparent (see Scaffold in MainScreen) for it to show through.
+ */
+@Composable
+fun WatermarkBackground(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Box(modifier = modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(R.drawable.bg_watermark),
+            contentDescription = null,
+            alpha = 0.06f,
+            modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.8f),
+        )
+        content()
+    }
+}
 
 /** Full-size centered spinner for a screen's initial load. */
 @Composable

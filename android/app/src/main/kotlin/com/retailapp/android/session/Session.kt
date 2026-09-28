@@ -15,4 +15,9 @@ object Session {
 
     val isSuperAdmin: Boolean get() = currentUser?.user_type == "SUPER_ADMIN"
     val isCompanyAdmin: Boolean get() = currentUser?.user_type == "COMPANY_ADMIN"
+
+    // Mirrors RequireSalesAccess/RequirePurchaseAccess in internal/middleware/auth.go: admins
+    // always pass, the per-user flags only matter for STAFF.
+    val canSell: Boolean get() = isCompanyAdmin || isSuperAdmin || currentUser?.sales_access == true
+    val canPurchase: Boolean get() = isCompanyAdmin || isSuperAdmin || currentUser?.purchase_access == true
 }

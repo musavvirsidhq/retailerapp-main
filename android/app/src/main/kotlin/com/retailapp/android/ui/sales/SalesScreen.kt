@@ -71,7 +71,7 @@ fun SalesScreen(onOpenBill: (Int) -> Unit, viewModel: SalesViewModel = viewModel
 
     Scaffold(
         floatingActionButton = {
-            if (Session.currentUser?.sales_access == true) {
+            if (Session.canSell) {
                 FloatingActionButton(onClick = { showNewSale = true }) {
                     Icon(Icons.Default.Add, contentDescription = "New sale")
                 }

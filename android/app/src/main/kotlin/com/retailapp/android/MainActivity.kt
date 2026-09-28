@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.retailapp.android.navigation.RetailAppRoot
+import com.retailapp.android.ui.common.WatermarkBackground
 import com.retailapp.android.ui.theme.RetailAppTheme
 
 class MainActivity : ComponentActivity() {
@@ -17,7 +18,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             RetailAppTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    RetailAppRoot()
+                    WatermarkBackground {
+                        RetailAppRoot()
+                    }
                 }
             }
         }
