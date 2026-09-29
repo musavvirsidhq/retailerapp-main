@@ -11,4 +11,9 @@ data class DashboardData(
     val low_stock: List<LowStockItem>,
     val shop_dues: List<DueItem>,
     val factory_payables: List<DueItem>,
+    // Cycle 4 dashboard cards. Nullable so an older backend without them still parses.
+    val customer_due_total: String?,
+    val customer_due_count: Int?,
+    val supplier_due_total: String?,
+    val supplier_due_count: Int?,
 )

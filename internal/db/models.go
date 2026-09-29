@@ -95,6 +95,7 @@ type Product struct {
 	Description         pgtype.Text
 	IsBundle            bool
 	StorefrontVisible   bool
+	Pinned              bool
 }
 
 type ProductCostLayer struct {
@@ -244,6 +245,21 @@ type Subscription struct {
 	CreatedOn        pgtype.Timestamptz
 	ModifiedOn       pgtype.Timestamptz
 	Version          int32
+}
+
+type TransactionAttachment struct {
+	ID           int32
+	CompanyID    int32
+	EntityType   string
+	EntityID     int32
+	FilePath     string
+	ContentType  string
+	SizeBytes    int32
+	UploadedBy   pgtype.Int4
+	CreatedAt    pgtype.Timestamptz
+	DeletedAt    pgtype.Timestamptz
+	DeletedBy    pgtype.Int4
+	DeleteReason pgtype.Text
 }
 
 type Unit struct {

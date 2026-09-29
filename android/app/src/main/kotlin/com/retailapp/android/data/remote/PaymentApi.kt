@@ -2,6 +2,7 @@ package com.retailapp.android.data.remote
 
 import com.retailapp.android.data.model.BalanceResponse
 import com.retailapp.android.data.model.Payment
+import com.retailapp.android.data.model.PaymentDetail
 import com.retailapp.android.data.model.PaymentInput
 import retrofit2.Response
 import retrofit2.http.Body
@@ -15,6 +16,9 @@ interface PaymentApi {
 
     @POST("api/payments/")
     suspend fun createPayment(@Body body: PaymentInput): Response<Payment>
+
+    @GET("api/payments/{id}")
+    suspend fun getPayment(@Path("id") id: Int): Response<PaymentDetail>
 
     @GET("api/shops/{id}/balance")
     suspend fun getShopBalance(@Path("id") id: Int): Response<BalanceResponse>

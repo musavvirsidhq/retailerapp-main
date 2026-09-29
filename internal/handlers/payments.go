@@ -53,6 +53,31 @@ func (h *PaymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "party_type must be 'shop' or 'factory'", http.StatusBadRequest)
 		return
 	}
+	// Collecting from a customer is a sales action and paying a supplier a purchase action,
+	// so staff need the matching permission (Cycle 4 section 14).
+	if in.PartyType == "shop" && !appMiddleware.HasSalesAccess(r.Context()) {
+		http.Error(w, "forbidden: sales access required", http.StatusForbidden)
+		return
+	}
+	if in.PartyType == "factory" && !appMiddleware.HasPurchaseAccess(r.Context()) {
+		http.Error(w, "forbidden: purchase access required", http.StatusForbidden)
+		return
+	}
+	if in.Amount <= 0 {
+		http.Error(w, "amount must be greater than zero", http.StatusBadRequest)
+		return
+	}
+	// party_id has no foreign key (it points at shops or factories), so check it here to keep
+	// a payment from being recorded against another company's party.
+	if in.PartyType == "shop" {
+		if _, err := h.Queries.GetShop(r.Context(), db.GetShopParams{ID: in.PartyID, CompanyID: companyID}); err != nil {
+			http.Error(w, "customer not found", http.StatusBadRequest)
+			return
+		}
+	} else if _, err := h.Queries.GetFactory(r.Context(), db.GetFactoryParams{ID: in.PartyID, CompanyID: companyID}); err != nil {
+		http.Error(w, "supplier not found", http.StatusBadRequest)
+		return
+	}
 
 	payment, err := h.Queries.CreatePayment(r.Context(), db.CreatePaymentParams{
 		CompanyID:   companyID,
@@ -69,6 +94,41 @@ func (h *PaymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, payment)
+}
+
+type paymentDetail struct {
+	db.Payment
+	PartyName string
+}
+
+// Get returns one payment plus its party's name, for the Android payment detail screen.
+func (h *PaymentHandler) Get(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	companyID, _ := appMiddleware.CompanyIDFromContext(ctx)
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	p, err := h.Queries.GetPayment(ctx, db.GetPaymentParams{ID: int32(id), CompanyID: companyID})
+	if err != nil {
+		http.Error(w, "payment not found", http.StatusNotFound)
+		return
+	}
+	if (p.PartyType == "shop" && !appMiddleware.HasSalesAccess(ctx)) ||
+		(p.PartyType == "factory" && !appMiddleware.HasPurchaseAccess(ctx)) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	name := ""
+	if p.PartyType == "shop" {
+		if s, err := h.Queries.GetShop(ctx, db.GetShopParams{ID: p.PartyID, CompanyID: companyID}); err == nil {
+			name = s.Name
+		}
+	} else if f, err := h.Queries.GetFactory(ctx, db.GetFactoryParams{ID: p.PartyID, CompanyID: companyID}); err == nil {
+		name = f.Name
+	}
+	writeJSON(w, paymentDetail{Payment: p, PartyName: name})
 }
 
 func (h *PaymentHandler) ShopBalance(w http.ResponseWriter, r *http.Request) {

@@ -14,6 +14,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.FloatingActionButton
@@ -32,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,6 +44,7 @@ import com.retailapp.android.data.model.Product
 import com.retailapp.android.data.model.ProductInput
 import com.retailapp.android.data.model.Subcategory
 import com.retailapp.android.data.model.UnitDto
+import com.retailapp.android.session.Session
 import com.retailapp.android.ui.common.DropdownField
 import com.retailapp.android.ui.common.ErrorBox
 import com.retailapp.android.ui.common.InlineError
@@ -71,6 +75,7 @@ fun ProductsScreen(viewModel: ProductsViewModel = viewModel()) {
                 categoryName = viewModel::categoryName,
                 padding = padding,
                 onDelete = { pendingDeleteId = it },
+                onTogglePin = viewModel::togglePin,
             )
         }
     }
@@ -102,6 +107,7 @@ private fun ProductList(
     categoryName: (Int) -> String,
     padding: PaddingValues,
     onDelete: (Int) -> Unit,
+    onTogglePin: (Product) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
@@ -123,6 +129,16 @@ private fun ProductList(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text("₹${product.CurrentSellingPrice}", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    // Pinned items always lead the "most used" chips on the sale and purchase forms.
+                    if (Session.isCompanyAdmin) {
+                        IconButton(onClick = { onTogglePin(product) }) {
+                            Icon(
+                                if (product.Pinned) Icons.Default.Star else Icons.Default.StarBorder,
+                                contentDescription = if (product.Pinned) "Unpin" else "Pin to quick access",
+                                tint = if (product.Pinned) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     IconButton(onClick = { onDelete(product.ID) }) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)

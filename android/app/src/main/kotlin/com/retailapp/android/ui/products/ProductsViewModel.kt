@@ -1,10 +1,12 @@
 package com.retailapp.android.ui.products
 
+import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.retailapp.android.RetailApp
 import com.retailapp.android.data.model.Category
 import com.retailapp.android.data.model.CreateCategoryRequest
 import com.retailapp.android.data.model.CreateSubcategoryRequest
@@ -110,6 +112,19 @@ class ProductsViewModel : ViewModel() {
                     onDone(false)
                 }
             isSubmitting = false
+        }
+    }
+
+    /**
+     * Pins/unpins an item for the sale and purchase "most used" chips (Company Admin only; the
+     * backend caps it at 10). Failures are toasted since the list has no inline error slot.
+     */
+    fun togglePin(product: Product) {
+        viewModelScope.launch {
+            val pin = !product.Pinned
+            NetworkModule.safeCall { if (pin) productApi.pin(product.ID) else productApi.unpin(product.ID) }
+                .onSuccess { products = products.map { if (it.ID == product.ID) it.copy(Pinned = pin) else it } }
+                .onFailure { Toast.makeText(RetailApp.instance, it.message, Toast.LENGTH_LONG).show() }
         }
     }
 

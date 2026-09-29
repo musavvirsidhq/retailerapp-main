@@ -103,12 +103,33 @@ func (h *ReportHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		factoryPayables = []db.FactoryPayablesRow{}
 	}
 
+	// Cycle 4 dashboard cards: total still to receive from customers / to pay suppliers,
+	// counting only parties with a positive balance (advances don't offset other dues).
+	var customerDue, supplierDue int64
+	customerCount, supplierCount := 0, 0
+	for _, d := range shopDues {
+		if b := toPaise(d.Balance); b > 0 {
+			customerDue += b
+			customerCount++
+		}
+	}
+	for _, f := range factoryPayables {
+		if b := toPaise(f.Balance); b > 0 {
+			supplierDue += b
+			supplierCount++
+		}
+	}
+
 	writeJSON(w, map[string]interface{}{
-		"today_sales":      todaySales,
-		"today_purchases":  todayPurchases,
-		"total_profit":     profit,
-		"low_stock":        lowStock,
-		"shop_dues":        shopDues,
-		"factory_payables": factoryPayables,
+		"today_sales":        todaySales,
+		"today_purchases":    todayPurchases,
+		"total_profit":       profit,
+		"low_stock":          lowStock,
+		"shop_dues":          shopDues,
+		"factory_payables":   factoryPayables,
+		"customer_due_total": formatPaise(customerDue),
+		"customer_due_count": customerCount,
+		"supplier_due_total": formatPaise(supplierDue),
+		"supplier_due_count": supplierCount,
 	})
 }

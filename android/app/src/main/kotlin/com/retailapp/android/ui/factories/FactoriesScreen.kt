@@ -35,19 +35,20 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.retailapp.android.data.model.FactoryInput
+import com.retailapp.android.session.Session
 import com.retailapp.android.ui.common.ErrorBox
 import com.retailapp.android.ui.common.InlineError
 import com.retailapp.android.ui.common.LoadingBox
 
 @Composable
-fun FactoriesScreen(viewModel: FactoriesViewModel = viewModel()) {
+fun FactoriesScreen(onOpenLedger: (Int) -> Unit, viewModel: FactoriesViewModel = viewModel()) {
     var showAddDialog by remember { mutableStateOf(false) }
     var pendingDeleteId by remember { mutableStateOf<Int?>(null) }
 
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(onClick = { showAddDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = "Add factory")
+                Icon(Icons.Default.Add, contentDescription = "Add supplier")
             }
         },
     ) { padding ->
@@ -57,14 +58,18 @@ fun FactoriesScreen(viewModel: FactoriesViewModel = viewModel()) {
                 ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load, modifier = Modifier.padding(padding))
             viewModel.factories.isEmpty() ->
                 Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    Text("No factories/suppliers yet. Tap + to add one.")
+                    Text("No suppliers yet. Tap + to add one.")
                 }
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(viewModel.factories, key = { it.ID }) { factory ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    // Tapping a supplier opens their ledger (balance, bills, payments, photos).
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { if (Session.canPurchase) onOpenLedger(factory.ID) },
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -101,7 +106,7 @@ fun FactoriesScreen(viewModel: FactoriesViewModel = viewModel()) {
     pendingDeleteId?.let { id ->
         AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
-            title = { Text("Delete factory/supplier?") },
+            title = { Text("Delete supplier?") },
             text = { Text("This can't be undone.") },
             confirmButton = { TextButton(onClick = { viewModel.deleteFactory(id); pendingDeleteId = null }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { pendingDeleteId = null }) { Text("Cancel") } },
@@ -124,11 +129,11 @@ private fun AddFactoryDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New factory / supplier") },
+        title = { Text("New supplier") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true)
-                OutlinedTextField(value = contactPerson, onValueChange = { contactPerson = it }, label = { Text("Contact person") }, singleLine = true)
+                OutlinedTextField(value = contactPerson, onValueChange = { contactPerson = it }, label = { Text("Contact name") }, singleLine = true)
                 OutlinedTextField(
                     value = primaryPhone,
                     onValueChange = { primaryPhone = it },

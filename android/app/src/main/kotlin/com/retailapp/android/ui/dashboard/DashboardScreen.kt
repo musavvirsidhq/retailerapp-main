@@ -1,6 +1,7 @@
 package com.retailapp.android.ui.dashboard
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,13 +25,16 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.AddShoppingCart
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,7 +45,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.retailapp.android.session.Session
+import com.retailapp.android.ui.common.Terms
 import com.retailapp.android.data.model.DashboardData
 import com.retailapp.android.data.model.DueItem
 import com.retailapp.android.data.model.LowStockItem
@@ -51,17 +59,31 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
+/** Where the dashboard's quick actions and drill-downs lead; wired up in MainScreen. */
+class DashboardActions(
+    val newSale: () -> Unit,
+    val newPurchase: () -> Unit,
+    val collectMoney: () -> Unit,
+    val paySupplier: () -> Unit,
+    val customerDues: () -> Unit,
+    val supplierDues: () -> Unit,
+    val customerLedger: (Int) -> Unit,
+    val supplierLedger: (Int) -> Unit,
+)
+
 @Composable
-fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
+fun DashboardScreen(actions: DashboardActions, viewModel: DashboardViewModel = viewModel()) {
+    // Refresh on every return, so totals reflect a sale or payment made from a quick action.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.load() }
     when {
         viewModel.isLoading -> LoadingBox()
-        viewModel.errorMessage != null -> ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load)
-        viewModel.data != null -> DashboardContent(viewModel.data!!)
+        viewModel.errorMessage != null && viewModel.data == null -> ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load)
+        viewModel.data != null -> DashboardContent(viewModel.data!!, actions, viewModel.writesBlockedReason)
     }
 }
 
 @Composable
-private fun DashboardContent(data: DashboardData) {
+private fun DashboardContent(data: DashboardData, actions: DashboardActions, writesBlockedReason: String?) {
     val salesTotal = data.today_sales.Total.toDoubleOrNull() ?: 0.0
     val purchasesTotal = data.today_purchases.Total.toDoubleOrNull() ?: 0.0
     val profitTotal = data.total_profit.toDoubleOrNull() ?: 0.0
@@ -71,6 +93,39 @@ private fun DashboardContent(data: DashboardData) {
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         item { GreetingHeader() }
+
+        item { QuickActions(actions, writesBlockedReason) }
+
+        if (Session.canSell || Session.canPurchase) {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (Session.canSell) {
+                        DueCard(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Filled.People,
+                            title = Terms.CUSTOMERS,
+                            label = "To receive",
+                            total = data.customer_due_total ?: data.shop_dues.sumOf { (it.Balance.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) }.toString(),
+                            count = data.customer_due_count,
+                            color = Color(0xFF0D9488),
+                            onClick = actions.customerDues,
+                        )
+                    }
+                    if (Session.canPurchase) {
+                        DueCard(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Filled.LocalShipping,
+                            title = Terms.SUPPLIERS,
+                            label = "To pay",
+                            total = data.supplier_due_total ?: data.factory_payables.sumOf { (it.Balance.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) }.toString(),
+                            count = data.supplier_due_count,
+                            color = Color(0xFF525E7D),
+                            onClick = actions.supplierDues,
+                        )
+                    }
+                }
+            }
+        }
 
         item {
             HeroProfitCard(value = formatCurrency(profitTotal))
@@ -110,20 +165,101 @@ private fun DashboardContent(data: DashboardData) {
             item { SectionHeader(Icons.Filled.Warning, "Low Stock", tint = Color(0xFFF59E0B)) }
             items(data.low_stock) { LowStockRow(it) }
         }
-        if (data.shop_dues.isNotEmpty()) {
+        // Top balances only; the full, recency-sorted list is one tap away on the dues screen.
+        val customerDues = data.shop_dues.filter { (it.Balance.toDoubleOrNull() ?: 0.0) > 0 }.take(5)
+        if (Session.canSell && customerDues.isNotEmpty()) {
             item {
-                SectionHeader(Icons.Filled.Storefront, "Shop Dues", tint = MaterialTheme.colorScheme.primary)
+                SectionHeader(Icons.Filled.People, "Customer Dues", tint = MaterialTheme.colorScheme.primary, onSeeAll = actions.customerDues)
             }
             item {
-                DuesChartCard(data.shop_dues, Color(0xFF0D9488))
+                DuesChartCard(customerDues, Color(0xFF0D9488), onClickItem = actions.customerLedger)
             }
         }
-        if (data.factory_payables.isNotEmpty()) {
+        val supplierDues = data.factory_payables.filter { (it.Balance.toDoubleOrNull() ?: 0.0) > 0 }.take(5)
+        if (Session.canPurchase && supplierDues.isNotEmpty()) {
             item {
-                SectionHeader(Icons.Filled.LocalShipping, "Factory Payables", tint = MaterialTheme.colorScheme.tertiary)
+                SectionHeader(Icons.Filled.LocalShipping, "Supplier Dues", tint = MaterialTheme.colorScheme.tertiary, onSeeAll = actions.supplierDues)
             }
             item {
-                DuesChartCard(data.factory_payables, Color(0xFF525E7D))
+                DuesChartCard(supplierDues, Color(0xFF525E7D), onClickItem = actions.supplierLedger)
+            }
+        }
+    }
+}
+
+/**
+ * The four most frequent actions, one tap each. Buttons follow the staff permissions, and are
+ * disabled (with the reason shown) when the subscription no longer allows writes.
+ */
+@Composable
+private fun QuickActions(actions: DashboardActions, writesBlockedReason: String?) {
+    val buttons = buildList {
+        if (Session.canSell) add(QuickAction("+ Sale", Icons.Filled.AddShoppingCart, Color(0xFF0D9488), actions.newSale))
+        if (Session.canPurchase) add(QuickAction("+ Purchase", Icons.Filled.Inventory2, Color(0xFFEA580C), actions.newPurchase))
+        if (Session.canSell) add(QuickAction("Collect", Icons.Filled.AccountBalanceWallet, Color(0xFF15803D), actions.collectMoney))
+        if (Session.canPurchase) add(QuickAction("Pay", Icons.Filled.Payments, Color(0xFF525E7D), actions.paySupplier))
+    }
+    if (buttons.isEmpty()) return
+    val enabled = writesBlockedReason == null
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            buttons.forEach { action ->
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(action.color.copy(alpha = if (enabled) 0.12f else 0.05f))
+                        .clickable(enabled = enabled, onClick = action.onClick)
+                        .padding(vertical = 14.dp),
+                ) {
+                    IconBadge(
+                        action.icon,
+                        tint = Color.White,
+                        background = if (enabled) action.color else action.color.copy(alpha = 0.4f),
+                        size = 40.dp,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(action.label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        if (writesBlockedReason != null) {
+            Text(writesBlockedReason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+private class QuickAction(val label: String, val icon: ImageVector, val color: Color, val onClick: () -> Unit)
+
+@Composable
+private fun DueCard(
+    icon: ImageVector,
+    title: String,
+    label: String,
+    total: String,
+    count: Int?,
+    color: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+        modifier = modifier,
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconBadge(icon, tint = color, background = color.copy(alpha = 0.12f), size = 30.dp)
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(formatCurrency(total.toDoubleOrNull() ?: 0.0), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = color)
+            if (count != null) {
+                Text("$count pending ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -193,10 +329,17 @@ private fun IconBadge(icon: ImageVector, tint: Color, background: Color, size: a
 }
 
 @Composable
-private fun SectionHeader(icon: ImageVector, text: String, tint: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun SectionHeader(icon: ImageVector, text: String, tint: Color, onSeeAll: (() -> Unit)? = null) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         IconBadge(icon, tint = tint, background = tint.copy(alpha = 0.12f), size = 30.dp)
-        Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        if (onSeeAll != null) {
+            TextButton(onClick = onSeeAll) { Text("See all") }
+        }
     }
 }
 
@@ -249,7 +392,7 @@ private fun ChartCard(title: String, bars: List<BarEntry>) {
 }
 
 @Composable
-private fun DuesChartCard(items: List<DueItem>, color: Color) {
+private fun DuesChartCard(items: List<DueItem>, color: Color, onClickItem: (Int) -> Unit) {
     val balances = items.map { it.Balance.toDoubleOrNull() ?: 0.0 }
     val max = balances.maxOrNull()?.takeIf { it > 0.0 } ?: 1.0
     val total = balances.sum()
@@ -263,14 +406,16 @@ private fun DuesChartCard(items: List<DueItem>, color: Color) {
                 Text("Total outstanding", style = MaterialTheme.typography.labelMedium)
                 Text(formatCurrency(total), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = color)
             }
-            items.forEachIndexed { index, item -> BarRow(item.Name, balances[index], max, color) }
+            items.forEachIndexed { index, item ->
+                BarRow(item.Name, balances[index], max, color, modifier = Modifier.clickable { onClickItem(item.ID) })
+            }
         }
     }
 }
 
 @Composable
-private fun BarRow(label: String, value: Double, max: Double, color: Color) {
-    Column {
+private fun BarRow(label: String, value: Double, max: Double, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
             Text(formatCurrency(value), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)

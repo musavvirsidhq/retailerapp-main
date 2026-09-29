@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="bills" path="bills/" />
+    <!-- Camera captures before upload, and proof photos saved for the share sheet. -->
+    <cache-path name="photos" path="photos/" />
 </paths>

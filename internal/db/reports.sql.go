@@ -60,7 +60,7 @@ func (q *Queries) FactoryPayables(ctx context.Context, companyID int32) ([]Facto
 }
 
 const lowStockProducts = `-- name: LowStockProducts :many
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible FROM products WHERE company_id = $1 AND current_stock < 10 ORDER BY current_stock ASC
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE company_id = $1 AND current_stock < 10 ORDER BY current_stock ASC
 `
 
 func (q *Queries) LowStockProducts(ctx context.Context, companyID int32) ([]Product, error) {
@@ -86,6 +86,7 @@ func (q *Queries) LowStockProducts(ctx context.Context, companyID int32) ([]Prod
 			&i.Description,
 			&i.IsBundle,
 			&i.StorefrontVisible,
+			&i.Pinned,
 		); err != nil {
 			return nil, err
 		}

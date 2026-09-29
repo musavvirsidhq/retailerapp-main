@@ -37,12 +37,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.retailapp.android.data.model.BillData
 import com.retailapp.android.data.model.BillItem
+import com.retailapp.android.data.remote.AttachmentEntity
+import com.retailapp.android.session.Session
+import com.retailapp.android.ui.common.AttachmentsSection
 import com.retailapp.android.ui.common.ErrorBox
 import com.retailapp.android.ui.common.LoadingBox
 import com.retailapp.android.ui.common.successColor
 
 @Composable
-fun BillDetailScreen(id: Int, isSale: Boolean, onBack: () -> Unit) {
+fun BillDetailScreen(id: Int, isSale: Boolean, onBack: () -> Unit, onOpenPhoto: (index: Int, title: String) -> Unit) {
     val viewModel: BillDetailViewModel = viewModel(factory = BillDetailViewModel.Factory(id, isSale))
     var showCancelDialog by remember { mutableStateOf(false) }
 
@@ -69,6 +72,9 @@ fun BillDetailScreen(id: Int, isSale: Boolean, onBack: () -> Unit) {
                 ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load, modifier = Modifier.padding(padding))
             viewModel.bill != null -> BillContent(
                 bill = viewModel.bill!!,
+                billId = id,
+                isSale = isSale,
+                onOpenPhoto = onOpenPhoto,
                 isCancelling = viewModel.isCancelling,
                 modifier = Modifier.padding(padding),
                 onCancelClick = { showCancelDialog = true },
@@ -88,6 +94,9 @@ fun BillDetailScreen(id: Int, isSale: Boolean, onBack: () -> Unit) {
 @Composable
 private fun BillContent(
     bill: BillData,
+    billId: Int,
+    isSale: Boolean,
+    onOpenPhoto: (index: Int, title: String) -> Unit,
     isCancelling: Boolean,
     onCancelClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -140,6 +149,16 @@ private fun BillContent(
                     }
                 }
             }
+        }
+
+        item {
+            // Proof photos of the paper bill / delivery note (Cycle 4). Cancelled bills keep theirs.
+            AttachmentsSection(
+                entity = if (isSale) AttachmentEntity.SALE else AttachmentEntity.PURCHASE,
+                entityId = billId,
+                canAdd = if (isSale) Session.canSell else Session.canPurchase,
+                onOpenPhoto = { index -> onOpenPhoto(index, "${bill.BillNumber} · ${bill.CounterpartyName}") },
+            )
         }
 
         if (bill.Status == "COMPLETED") {

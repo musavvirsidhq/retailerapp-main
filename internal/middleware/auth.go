@@ -122,20 +122,34 @@ func RequireCompanyAdmin() func(http.Handler) http.Handler {
 	}
 }
 
+// HasPurchaseAccess is the check behind RequirePurchaseAccess, for handlers that only know
+// which permission applies after reading the request (e.g. a payment's party type).
+func HasPurchaseAccess(ctx context.Context) bool {
+	ut := UserTypeFromContext(ctx)
+	return ut == UserTypeCompanyAdmin || ut == UserTypeSuperAdmin || (ut == UserTypeStaff && PurchaseAccessFromContext(ctx))
+}
+
+// HasSalesAccess is the check behind RequireSalesAccess.
+func HasSalesAccess(ctx context.Context) bool {
+	ut := UserTypeFromContext(ctx)
+	return ut == UserTypeCompanyAdmin || ut == UserTypeSuperAdmin || (ut == UserTypeStaff && SalesAccessFromContext(ctx))
+}
+
+// IsCompanyAdmin reports whether the caller is a COMPANY_ADMIN (or the exempt SUPER_ADMIN).
+func IsCompanyAdmin(ctx context.Context) bool {
+	ut := UserTypeFromContext(ctx)
+	return ut == UserTypeCompanyAdmin || ut == UserTypeSuperAdmin
+}
+
 // RequirePurchaseAccess allows COMPANY_ADMIN always, and STAFF only when granted purchase_access.
 func RequirePurchaseAccess() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ut := UserTypeFromContext(r.Context())
-			if ut == UserTypeCompanyAdmin || ut == UserTypeSuperAdmin {
-				next.ServeHTTP(w, r)
+			if !HasPurchaseAccess(r.Context()) {
+				http.Error(w, "forbidden: purchase access required", http.StatusForbidden)
 				return
 			}
-			if ut == UserTypeStaff && PurchaseAccessFromContext(r.Context()) {
-				next.ServeHTTP(w, r)
-				return
-			}
-			http.Error(w, "forbidden: purchase access required", http.StatusForbidden)
+			next.ServeHTTP(w, r)
 		})
 	}
 }
@@ -144,16 +158,11 @@ func RequirePurchaseAccess() func(http.Handler) http.Handler {
 func RequireSalesAccess() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ut := UserTypeFromContext(r.Context())
-			if ut == UserTypeCompanyAdmin || ut == UserTypeSuperAdmin {
-				next.ServeHTTP(w, r)
+			if !HasSalesAccess(r.Context()) {
+				http.Error(w, "forbidden: sales access required", http.StatusForbidden)
 				return
 			}
-			if ut == UserTypeStaff && SalesAccessFromContext(r.Context()) {
-				next.ServeHTTP(w, r)
-				return
-			}
-			http.Error(w, "forbidden: sales access required", http.StatusForbidden)
+			next.ServeHTTP(w, r)
 		})
 	}
 }

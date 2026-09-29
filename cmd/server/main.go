@@ -36,6 +36,13 @@ func main() {
 		uploadsDir = "uploads"
 	}
 
+	// Payment/bill proof photos are private, so they must NOT live under uploadsDir (which is
+	// served publicly below). They are only served via /api/attachments/{id}/file.
+	attachmentsDir := os.Getenv("ATTACHMENTS_DIR")
+	if attachmentsDir == "" {
+		attachmentsDir = "attachments"
+	}
+
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		log.Fatalf("unable to connect to database: %v", err)
@@ -72,6 +79,12 @@ func main() {
 	productStorefrontHandler := handlers.NewProductStorefrontHandler(queries, pool, uploadsDir)
 	storefrontSettingsHandler := handlers.NewStorefrontSettingsHandler(queries)
 	publicStorefrontHandler := handlers.NewPublicStorefrontHandler(queries, pool)
+	ledgerHandler := handlers.NewLedgerHandler(queries)
+	attachmentHandler := handlers.NewAttachmentHandler(queries, pool, attachmentsDir)
+	quickItemsHandler := handlers.NewQuickItemsHandler(queries)
+	saleAttList, saleAttUpload, saleAttDelete := attachmentHandler.ForEntity("sale")
+	purchaseAttList, purchaseAttUpload, purchaseAttDelete := attachmentHandler.ForEntity("purchase")
+	paymentAttList, paymentAttUpload, paymentAttDelete := attachmentHandler.ForEntity("payment")
 
 	// Looks up a company's current subscription status for RequireActiveSubscription without
 	// the middleware package depending on db directly.
@@ -147,6 +160,10 @@ func main() {
 			r.Route("/api/products", func(r chi.Router) {
 				r.Get("/", productHandler.List)
 				r.Post("/", productHandler.Create)
+				// Registered before /{id} so "frequent" is never parsed as a product id.
+				r.Get("/frequent", quickItemsHandler.Frequent)
+				r.With(appMiddleware.RequireCompanyAdmin()).Put("/{id}/pin", quickItemsHandler.Pin)
+				r.With(appMiddleware.RequireCompanyAdmin()).Delete("/{id}/pin", quickItemsHandler.Unpin)
 				r.Get("/{id}", productHandler.Get)
 				r.Put("/{id}", productHandler.Update)
 				r.Delete("/{id}", productHandler.Delete)
@@ -166,6 +183,7 @@ func main() {
 				r.Get("/{id}", factoryHandler.Get)
 				r.Put("/{id}", factoryHandler.Update)
 				r.Delete("/{id}", factoryHandler.Delete)
+				r.With(appMiddleware.RequirePurchaseAccess()).Get("/{id}/ledger", ledgerHandler.SupplierLedger)
 			})
 
 			r.Route("/api/shops", func(r chi.Router) {
@@ -174,6 +192,7 @@ func main() {
 				r.Get("/{id}", shopHandler.Get)
 				r.Put("/{id}", shopHandler.Update)
 				r.Delete("/{id}", shopHandler.Delete)
+				r.With(appMiddleware.RequireSalesAccess()).Get("/{id}/ledger", ledgerHandler.CustomerLedger)
 			})
 
 			r.Route("/api/purchases", func(r chi.Router) {
@@ -181,6 +200,9 @@ func main() {
 				r.With(appMiddleware.RequirePurchaseAccess()).Post("/", purchaseHandler.Create)
 				r.Get("/{id}/items", purchaseHandler.GetItems)
 				r.With(appMiddleware.RequirePurchaseAccess()).Post("/bills/{id}/cancel", purchaseHandler.Cancel)
+				r.Get("/{id}/attachments", purchaseAttList)
+				r.Post("/{id}/attachments", purchaseAttUpload)
+				r.Delete("/{id}/attachments/{attachmentId}", purchaseAttDelete)
 			})
 			r.Get("/api/purchases/bills/{id}", billHandler.PurchaseDetail)
 			r.Get("/api/purchases/bills/{id}/pdf", billHandler.PurchasePDF)
@@ -190,6 +212,9 @@ func main() {
 				r.With(appMiddleware.RequireSalesAccess()).Post("/", saleHandler.Create)
 				r.Get("/{id}/items", saleHandler.GetItems)
 				r.With(appMiddleware.RequireSalesAccess()).Post("/bills/{id}/cancel", saleHandler.Cancel)
+				r.Get("/{id}/attachments", saleAttList)
+				r.Post("/{id}/attachments", saleAttUpload)
+				r.Delete("/{id}/attachments/{attachmentId}", saleAttDelete)
 			})
 			r.Get("/api/sales/bills/{id}", billHandler.SaleDetail)
 			r.Get("/api/sales/bills/{id}/pdf", billHandler.SalePDF)
@@ -197,7 +222,12 @@ func main() {
 			r.Route("/api/payments", func(r chi.Router) {
 				r.Get("/", paymentHandler.List)
 				r.Post("/", paymentHandler.Create)
+				r.Get("/{id}", paymentHandler.Get)
+				r.Get("/{id}/attachments", paymentAttList)
+				r.Post("/{id}/attachments", paymentAttUpload)
+				r.Delete("/{id}/attachments/{attachmentId}", paymentAttDelete)
 			})
+			r.Get("/api/attachments/{id}/file", attachmentHandler.ServeFile)
 
 			r.Get("/api/shops/{id}/balance", paymentHandler.ShopBalance)
 			r.Get("/api/factories/{id}/balance", paymentHandler.FactoryBalance)
@@ -206,6 +236,10 @@ func main() {
 			r.Get("/api/reports/shop-dues", reportHandler.ShopDues)
 			r.Get("/api/reports/factory-payables", reportHandler.FactoryPayables)
 			r.Get("/api/reports/low-stock", reportHandler.LowStock)
+
+			// Cycle 4 customer/supplier dues and ledgers (Android).
+			r.With(appMiddleware.RequireSalesAccess()).Get("/api/reports/customer-dues", ledgerHandler.CustomerDues)
+			r.With(appMiddleware.RequirePurchaseAccess()).Get("/api/reports/supplier-dues", ledgerHandler.SupplierDues)
 
 			// Company Admin: staff management
 			r.Group(func(r chi.Router) {

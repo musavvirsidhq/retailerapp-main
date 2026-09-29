@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.retailapp.android.data.model.DashboardData
 import com.retailapp.android.data.remote.NetworkModule
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 class DashboardViewModel : ViewModel() {
@@ -17,17 +19,32 @@ class DashboardViewModel : ViewModel() {
     var errorMessage by mutableStateOf<String?>(null)
         private set
 
-    init {
-        load()
-    }
+    /**
+     * Set when the company's subscription no longer allows writes (the backend's
+     * RequireActiveSubscription), so the quick actions can say so instead of failing later.
+     */
+    var writesBlockedReason by mutableStateOf<String?>(null)
+        private set
 
+    /** Called on every resume, so numbers are fresh after a quick action. Only the first load shows a spinner. */
     fun load() {
         viewModelScope.launch {
-            isLoading = true
+            isLoading = data == null
             errorMessage = null
-            NetworkModule.safeCall { NetworkModule.reportApi.getDashboard() }
-                .onSuccess { data = it }
-                .onFailure { errorMessage = it.message }
+            coroutineScope {
+                val dashboard = async { NetworkModule.safeCall { NetworkModule.reportApi.getDashboard() } }
+                val subscription = async { NetworkModule.safeCall { NetworkModule.companyApi.getSubscriptionStatus() } }
+                dashboard.await()
+                    .onSuccess { data = it }
+                    .onFailure { errorMessage = it.message }
+                subscription.await().onSuccess {
+                    writesBlockedReason = when (it.status) {
+                        "EXPIRED" -> "Your subscription has expired. Renew it to add sales, purchases or payments."
+                        "SUSPENDED" -> "Your company is suspended. Contact support to add sales, purchases or payments."
+                        else -> null
+                    }
+                }
+            }
             isLoading = false
         }
     }

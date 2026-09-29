@@ -35,19 +35,20 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.retailapp.android.data.model.ShopInput
+import com.retailapp.android.session.Session
 import com.retailapp.android.ui.common.ErrorBox
 import com.retailapp.android.ui.common.InlineError
 import com.retailapp.android.ui.common.LoadingBox
 
 @Composable
-fun ShopsScreen(viewModel: ShopsViewModel = viewModel()) {
+fun ShopsScreen(onOpenLedger: (Int) -> Unit, viewModel: ShopsViewModel = viewModel()) {
     var showAddDialog by remember { mutableStateOf(false) }
     var pendingDeleteId by remember { mutableStateOf<Int?>(null) }
 
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(onClick = { showAddDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = "Add shop")
+                Icon(Icons.Default.Add, contentDescription = "Add customer")
             }
         },
     ) { padding ->
@@ -57,14 +58,18 @@ fun ShopsScreen(viewModel: ShopsViewModel = viewModel()) {
                 ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load, modifier = Modifier.padding(padding))
             viewModel.shops.isEmpty() ->
                 Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    Text("No shops yet. Tap + to add one.")
+                    Text("No customers yet. Tap + to add one.")
                 }
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(viewModel.shops, key = { it.ID }) { shop ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    // Tapping a customer opens their ledger (balance, bills, payments, photos).
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { if (Session.canSell) onOpenLedger(shop.ID) },
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -101,7 +106,7 @@ fun ShopsScreen(viewModel: ShopsViewModel = viewModel()) {
     pendingDeleteId?.let { id ->
         AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
-            title = { Text("Delete shop?") },
+            title = { Text("Delete customer?") },
             text = { Text("This can't be undone.") },
             confirmButton = { TextButton(onClick = { viewModel.deleteShop(id); pendingDeleteId = null }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { pendingDeleteId = null }) { Text("Cancel") } },
@@ -125,11 +130,11 @@ private fun AddShopDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New shop") },
+        title = { Text("New customer") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true)
-                OutlinedTextField(value = ownerName, onValueChange = { ownerName = it }, label = { Text("Owner name") }, singleLine = true)
+                OutlinedTextField(value = ownerName, onValueChange = { ownerName = it }, label = { Text("Contact name") }, singleLine = true)
                 OutlinedTextField(
                     value = primaryPhone,
                     onValueChange = { primaryPhone = it },

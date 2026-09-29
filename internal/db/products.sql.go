@@ -14,7 +14,7 @@ import (
 const createProduct = `-- name: CreateProduct :one
 INSERT INTO products (company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
 `
 
 type CreateProductParams struct {
@@ -52,6 +52,7 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (P
 		&i.Description,
 		&i.IsBundle,
 		&i.StorefrontVisible,
+		&i.Pinned,
 	)
 	return i, err
 }
@@ -71,7 +72,7 @@ func (q *Queries) DeleteProduct(ctx context.Context, arg DeleteProductParams) er
 }
 
 const getProduct = `-- name: GetProduct :one
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible FROM products WHERE id = $1 AND company_id = $2
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE id = $1 AND company_id = $2
 `
 
 type GetProductParams struct {
@@ -96,12 +97,13 @@ func (q *Queries) GetProduct(ctx context.Context, arg GetProductParams) (Product
 		&i.Description,
 		&i.IsBundle,
 		&i.StorefrontVisible,
+		&i.Pinned,
 	)
 	return i, err
 }
 
 const getStorefrontProduct = `-- name: GetStorefrontProduct :one
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible FROM products WHERE id = $1 AND company_id = $2 AND storefront_visible = true
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE id = $1 AND company_id = $2 AND storefront_visible = true
 `
 
 type GetStorefrontProductParams struct {
@@ -126,12 +128,13 @@ func (q *Queries) GetStorefrontProduct(ctx context.Context, arg GetStorefrontPro
 		&i.Description,
 		&i.IsBundle,
 		&i.StorefrontVisible,
+		&i.Pinned,
 	)
 	return i, err
 }
 
 const listProducts = `-- name: ListProducts :many
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible FROM products WHERE company_id = $1 ORDER BY name
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE company_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListProducts(ctx context.Context, companyID int32) ([]Product, error) {
@@ -157,6 +160,7 @@ func (q *Queries) ListProducts(ctx context.Context, companyID int32) ([]Product,
 			&i.Description,
 			&i.IsBundle,
 			&i.StorefrontVisible,
+			&i.Pinned,
 		); err != nil {
 			return nil, err
 		}
@@ -169,7 +173,7 @@ func (q *Queries) ListProducts(ctx context.Context, companyID int32) ([]Product,
 }
 
 const listStorefrontProducts = `-- name: ListStorefrontProducts :many
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible FROM products WHERE company_id = $1 AND storefront_visible = true ORDER BY name
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE company_id = $1 AND storefront_visible = true ORDER BY name
 `
 
 func (q *Queries) ListStorefrontProducts(ctx context.Context, companyID int32) ([]Product, error) {
@@ -195,6 +199,7 @@ func (q *Queries) ListStorefrontProducts(ctx context.Context, companyID int32) (
 			&i.Description,
 			&i.IsBundle,
 			&i.StorefrontVisible,
+			&i.Pinned,
 		); err != nil {
 			return nil, err
 		}
@@ -210,7 +215,7 @@ const updateProduct = `-- name: UpdateProduct :one
 UPDATE products
 SET name = $3, sku = $4, unit = $5, category_id = $6, subcategory_id = $7, current_selling_price = $8
 WHERE id = $1 AND company_id = $2
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
 `
 
 type UpdateProductParams struct {
@@ -250,13 +255,14 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (P
 		&i.Description,
 		&i.IsBundle,
 		&i.StorefrontVisible,
+		&i.Pinned,
 	)
 	return i, err
 }
 
 const updateProductSellingPrice = `-- name: UpdateProductSellingPrice :one
 UPDATE products SET current_selling_price = $3 WHERE id = $1 AND company_id = $2
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
 `
 
 type UpdateProductSellingPriceParams struct {
@@ -282,6 +288,7 @@ func (q *Queries) UpdateProductSellingPrice(ctx context.Context, arg UpdateProdu
 		&i.Description,
 		&i.IsBundle,
 		&i.StorefrontVisible,
+		&i.Pinned,
 	)
 	return i, err
 }
@@ -290,7 +297,7 @@ const updateProductStorefront = `-- name: UpdateProductStorefront :one
 UPDATE products
 SET description = $3, is_bundle = $4, storefront_visible = $5
 WHERE id = $1 AND company_id = $2
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
 `
 
 type UpdateProductStorefrontParams struct {
@@ -324,6 +331,7 @@ func (q *Queries) UpdateProductStorefront(ctx context.Context, arg UpdateProduct
 		&i.Description,
 		&i.IsBundle,
 		&i.StorefrontVisible,
+		&i.Pinned,
 	)
 	return i, err
 }

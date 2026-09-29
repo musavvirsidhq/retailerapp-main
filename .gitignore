@@ -17,6 +17,9 @@ cookies.txt
 # Uploaded product photos (served from disk, not committed)
 /uploads/
 
+# Payment/bill proof photos (private, served only via /api/attachments/{id}/file)
+/attachments/
+
 # OS/editor junk
 .DS_Store
 *.swp

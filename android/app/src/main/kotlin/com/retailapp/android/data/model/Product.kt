@@ -11,6 +11,7 @@ data class Product(
     val CurrentSellingPrice: String, // decimal serialized as string by the backend - parse with toDoubleOrNull()
     val CurrentStock: String,
     val CreatedAt: String,
+    val Pinned: Boolean = false,
 )
 
 data class ProductInput(

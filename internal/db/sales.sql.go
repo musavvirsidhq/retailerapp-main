@@ -142,7 +142,7 @@ const decrementProductStock = `-- name: DecrementProductStock :one
 UPDATE products
 SET current_stock = current_stock - $2
 WHERE id = $1 AND current_stock >= $2
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
 `
 
 type DecrementProductStockParams struct {
@@ -167,6 +167,7 @@ func (q *Queries) DecrementProductStock(ctx context.Context, arg DecrementProduc
 		&i.Description,
 		&i.IsBundle,
 		&i.StorefrontVisible,
+		&i.Pinned,
 	)
 	return i, err
 }

@@ -1,5 +1,6 @@
 package com.retailapp.android.data.remote
 
+import coil.ImageLoader
 import com.retailapp.android.RetailApp
 import com.retailapp.android.session.PersistentCookieJar
 import okhttp3.OkHttpClient
@@ -21,7 +22,8 @@ object NetworkModule {
 
     val cookieJar by lazy { PersistentCookieJar(RetailApp.instance) }
 
-    private val okHttpClient: OkHttpClient by lazy {
+    // Shared with Coil (see [imageLoader]) so private photo URLs load with the session cookie.
+    val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .cookieJar(cookieJar)
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -51,6 +53,18 @@ object NetworkModule {
     val companyApi: CompanyApi by lazy { retrofit.create(CompanyApi::class.java) }
     val superAdminApi: SuperAdminApi by lazy { retrofit.create(SuperAdminApi::class.java) }
     val billApi: BillApi by lazy { retrofit.create(BillApi::class.java) }
+    val ledgerApi: LedgerApi by lazy { retrofit.create(LedgerApi::class.java) }
+    val attachmentApi: AttachmentApi by lazy { retrofit.create(AttachmentApi::class.java) }
+
+    val imageLoader: ImageLoader by lazy {
+        ImageLoader.Builder(RetailApp.instance)
+            .okHttpClient { okHttpClient }
+            .crossfade(true)
+            .build()
+    }
+
+    /** Turns a server-relative path such as "/api/attachments/3/file" into a full URL. */
+    fun absoluteUrl(path: String): String = BASE_URL.trimEnd('/') + "/" + path.trimStart('/')
 
     /**
      * Runs a Retrofit call and turns it into a [Result] so every ViewModel handles errors the

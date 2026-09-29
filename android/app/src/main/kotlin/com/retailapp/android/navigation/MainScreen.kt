@@ -35,7 +35,14 @@ import com.retailapp.android.data.model.User
 import com.retailapp.android.ui.bills.BillDetailScreen
 import com.retailapp.android.ui.categories.CategoriesScreen
 import com.retailapp.android.ui.companyusers.CompanyUsersScreen
+import com.retailapp.android.data.remote.AttachmentEntity
+import com.retailapp.android.ui.common.PhotoViewerScreen
+import com.retailapp.android.ui.dashboard.DashboardActions
 import com.retailapp.android.ui.dashboard.DashboardScreen
+import com.retailapp.android.ui.ledger.DuesScreen
+import com.retailapp.android.ui.ledger.LedgerScreen
+import com.retailapp.android.ui.ledger.PartyKind
+import com.retailapp.android.ui.payments.PaymentDetailScreen
 import com.retailapp.android.ui.factories.FactoriesScreen
 import com.retailapp.android.ui.payments.PaymentsScreen
 import com.retailapp.android.ui.products.ProductsScreen
@@ -51,7 +58,8 @@ fun MainScreen(user: User, onLogout: () -> Unit) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val backStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = backStackEntry?.destination?.route
+    // Strip optional query args so "sales?new={new}&partyId={partyId}" still matches the "sales" drawer entry.
+    val currentRoute = backStackEntry?.destination?.route?.substringBefore('?')
 
     val isSuperAdmin = user.user_type == "SUPER_ADMIN"
     val drawerScreens = when {
@@ -60,6 +68,9 @@ fun MainScreen(user: User, onLogout: () -> Unit) {
         else -> companyDrawerScreens
     }
     val startDestination = if (isSuperAdmin) Screen.SuperAdminCompanies.route else Screen.Dashboard.route
+    // Drawer screens get the shared top bar; detail screens and forms opened from a quick action
+    // draw their own bar with a back arrow instead.
+    val showMainTopBar = drawerScreens.any { it.route == currentRoute } && backStackEntry?.arguments?.getString("new") == null
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -105,7 +116,7 @@ fun MainScreen(user: User, onLogout: () -> Unit) {
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
-                TopAppBar(
+                if (showMainTopBar) TopAppBar(
                     title = { Text(drawerScreens.find { it.route == currentRoute }?.label ?: "BulqBee") },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
@@ -120,18 +131,63 @@ fun MainScreen(user: User, onLogout: () -> Unit) {
                 startDestination = startDestination,
                 modifier = Modifier.fillMaxWidth().padding(padding),
             ) {
-                composable(Screen.Dashboard.route) { DashboardScreen() }
+                val back: () -> Unit = { navController.popBackStack() }
+                val openPhotos: (AttachmentEntity, Int, Int, String) -> Unit = { entity, id, start, title ->
+                    navController.navigate(photosRoute(entity, id, start, title))
+                }
+                // Optional query args shared by the sales/purchases/payments routes. partyId is
+                // a string because navigation can't have a nullable Int argument.
+                val formArgs = listOf(
+                    navArgument("new") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("partyId") { type = NavType.StringType; nullable = true; defaultValue = null },
+                )
+
+                composable(Screen.Dashboard.route) {
+                    DashboardScreen(
+                        DashboardActions(
+                            newSale = { navController.navigate(newSaleRoute()) },
+                            newPurchase = { navController.navigate(newPurchaseRoute()) },
+                            collectMoney = { navController.navigate(newPaymentRoute("shop")) },
+                            paySupplier = { navController.navigate(newPaymentRoute("factory")) },
+                            customerDues = { navController.navigate(duesRoute(PartyKind.CUSTOMER)) },
+                            supplierDues = { navController.navigate(duesRoute(PartyKind.SUPPLIER)) },
+                            customerLedger = { id -> navController.navigate(ledgerRoute(PartyKind.CUSTOMER, id)) },
+                            supplierLedger = { id -> navController.navigate(ledgerRoute(PartyKind.SUPPLIER, id)) },
+                        ),
+                    )
+                }
                 composable(Screen.Products.route) { ProductsScreen() }
                 composable(Screen.Categories.route) { CategoriesScreen() }
-                composable(Screen.Shops.route) { ShopsScreen() }
-                composable(Screen.Factories.route) { FactoriesScreen() }
-                composable(Screen.Sales.route) {
-                    SalesScreen(onOpenBill = { id -> navController.navigate(billRoute(isSale = true, id = id)) })
+                composable(Screen.Shops.route) {
+                    ShopsScreen(onOpenLedger = { id -> navController.navigate(ledgerRoute(PartyKind.CUSTOMER, id)) })
                 }
-                composable(Screen.Purchases.route) {
-                    PurchasesScreen(onOpenBill = { id -> navController.navigate(billRoute(isSale = false, id = id)) })
+                composable(Screen.Factories.route) {
+                    FactoriesScreen(onOpenLedger = { id -> navController.navigate(ledgerRoute(PartyKind.SUPPLIER, id)) })
                 }
-                composable(Screen.Payments.route) { PaymentsScreen() }
+                composable(SALES_ROUTE_PATTERN, arguments = formArgs) { entry ->
+                    SalesScreen(
+                        onOpenBill = { id -> navController.navigate(billRoute(isSale = true, id = id)) },
+                        startNew = entry.arguments?.getString("new") != null,
+                        presetShopId = entry.arguments?.getString("partyId")?.toIntOrNull(),
+                        onClose = back,
+                    )
+                }
+                composable(PURCHASES_ROUTE_PATTERN, arguments = formArgs) { entry ->
+                    PurchasesScreen(
+                        onOpenBill = { id -> navController.navigate(billRoute(isSale = false, id = id)) },
+                        startNew = entry.arguments?.getString("new") != null,
+                        presetFactoryId = entry.arguments?.getString("partyId")?.toIntOrNull(),
+                        onClose = back,
+                    )
+                }
+                composable(PAYMENTS_ROUTE_PATTERN, arguments = formArgs) { entry ->
+                    PaymentsScreen(
+                        onOpenPayment = { id -> navController.navigate(paymentDetailRoute(id)) },
+                        startNew = entry.arguments?.getString("new"),
+                        presetPartyId = entry.arguments?.getString("partyId")?.toIntOrNull(),
+                        onClose = back,
+                    )
+                }
                 composable(Screen.CompanyUsers.route) { CompanyUsersScreen() }
                 composable(Screen.SuperAdminCompanies.route) { SuperAdminScreen() }
                 composable(
@@ -143,7 +199,67 @@ fun MainScreen(user: User, onLogout: () -> Unit) {
                 ) { entry ->
                     val kind = entry.arguments?.getString("kind")
                     val id = entry.arguments?.getInt("id") ?: 0
-                    BillDetailScreen(id = id, isSale = kind == "sale", onBack = { navController.popBackStack() })
+                    val isSale = kind == "sale"
+                    BillDetailScreen(
+                        id = id,
+                        isSale = isSale,
+                        onBack = back,
+                        onOpenPhoto = { index, title ->
+                            openPhotos(if (isSale) AttachmentEntity.SALE else AttachmentEntity.PURCHASE, id, index, title)
+                        },
+                    )
+                }
+                composable(DUES_ROUTE_PATTERN, arguments = listOf(navArgument("kind") { type = NavType.StringType })) { entry ->
+                    val kind = PartyKind.valueOf(entry.arguments?.getString("kind") ?: PartyKind.CUSTOMER.name)
+                    DuesScreen(kind = kind, onBack = back, onOpenLedger = { id -> navController.navigate(ledgerRoute(kind, id)) })
+                }
+                composable(
+                    LEDGER_ROUTE_PATTERN,
+                    arguments = listOf(
+                        navArgument("kind") { type = NavType.StringType },
+                        navArgument("id") { type = NavType.IntType },
+                    ),
+                ) { entry ->
+                    val kind = PartyKind.valueOf(entry.arguments?.getString("kind") ?: PartyKind.CUSTOMER.name)
+                    val isCustomer = kind == PartyKind.CUSTOMER
+                    LedgerScreen(
+                        kind = kind,
+                        partyId = entry.arguments?.getInt("id") ?: 0,
+                        onBack = back,
+                        onOpenBill = { id -> navController.navigate(billRoute(isSale = isCustomer, id = id)) },
+                        onOpenPayment = { id -> navController.navigate(paymentDetailRoute(id)) },
+                        onOpenPhotos = { entity, id, title -> openPhotos(entity, id, 0, title) },
+                        onPay = { partyId -> navController.navigate(newPaymentRoute(kind.partyType, partyId)) },
+                        onNewBill = { partyId ->
+                            navController.navigate(if (isCustomer) newSaleRoute(partyId) else newPurchaseRoute(partyId))
+                        },
+                    )
+                }
+                composable(PAYMENT_DETAIL_ROUTE_PATTERN, arguments = listOf(navArgument("id") { type = NavType.IntType })) { entry ->
+                    val id = entry.arguments?.getInt("id") ?: 0
+                    PaymentDetailScreen(
+                        id = id,
+                        onBack = back,
+                        onOpenPhoto = { index, title -> openPhotos(AttachmentEntity.PAYMENT, id, index, title) },
+                    )
+                }
+                composable(
+                    PHOTOS_ROUTE_PATTERN,
+                    arguments = listOf(
+                        navArgument("entity") { type = NavType.StringType },
+                        navArgument("id") { type = NavType.IntType },
+                        navArgument("start") { type = NavType.IntType; defaultValue = 0 },
+                        navArgument("title") { type = NavType.StringType; defaultValue = "" },
+                    ),
+                ) { entry ->
+                    val args = entry.arguments
+                    PhotoViewerScreen(
+                        entity = AttachmentEntity.valueOf(args?.getString("entity") ?: AttachmentEntity.SALE.name),
+                        entityId = args?.getInt("id") ?: 0,
+                        startIndex = args?.getInt("start") ?: 0,
+                        title = args?.getString("title").orEmpty(),
+                        onBack = back,
+                    )
                 }
             }
         }
