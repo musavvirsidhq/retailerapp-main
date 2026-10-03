@@ -13,6 +13,10 @@ data class BillLine(
         get() = product != null && (quantity.toDoubleOrNull() ?: 0.0) > 0 && unitPrice.toDoubleOrNull() != null
 }
 
+/** Second line for a product in the item picker: "SKU · 12 kg in stock · ₹45.00". */
+fun productDetail(product: Product): String =
+    "${product.Sku} · ${trimQty(product.CurrentStock)} ${product.Unit} in stock · ${money(product.CurrentSellingPrice)}"
+
 /**
  * What tapping a most-used item chip does: bump the quantity if the item is already on the
  * bill, otherwise fill the first empty row, otherwise add a new row with quantity 1.

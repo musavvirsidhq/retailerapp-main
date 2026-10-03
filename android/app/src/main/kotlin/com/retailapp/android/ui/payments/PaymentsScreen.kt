@@ -3,6 +3,7 @@
 package com.retailapp.android.ui.payments
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +44,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -53,11 +57,16 @@ import com.retailapp.android.data.model.Payment
 import com.retailapp.android.data.model.PaymentInput
 import com.retailapp.android.data.model.Shop
 import com.retailapp.android.session.Session
-import com.retailapp.android.ui.common.DropdownField
+import com.retailapp.android.ui.common.DiscardDialog
 import com.retailapp.android.ui.common.ErrorBox
 import com.retailapp.android.ui.common.InlineError
 import com.retailapp.android.ui.common.LoadingBox
+import com.retailapp.android.ui.common.Messages
+import com.retailapp.android.ui.common.PagedListContent
 import com.retailapp.android.ui.common.PhotoPickerRow
+import com.retailapp.android.ui.common.SavedSheet
+import com.retailapp.android.ui.common.countLabel
+import com.retailapp.android.ui.common.SearchablePickerField
 import com.retailapp.android.ui.common.Terms
 import com.retailapp.android.ui.common.displayDate
 import com.retailapp.android.ui.common.money
@@ -66,74 +75,81 @@ import com.retailapp.android.ui.common.successColor
 val PAYMENT_MODES = listOf("Cash", "UPI", "Bank", "Cheque")
 
 /**
- * Payments list plus the Collect/Pay form. [startNew] ("shop" or "factory") opens the form
- * straight away - that's how the dashboard quick actions and ledger buttons land here - with
- * [presetPartyId] preselected; [onClose] then returns to wherever the user came from.
+ * The payments list, or - when [startNew] is "shop" / "factory" - the Collect / Pay form, each
+ * as its own navigation entry so the bottom bar can hide on the form. [presetPartyId]
+ * preselects the customer or supplier. After a collection the receipt sheet offers WhatsApp.
  */
 @Composable
 fun PaymentsScreen(
     onOpenPayment: (Int) -> Unit,
+    onNewPayment: (partyType: String) -> Unit = {},
     startNew: String? = null,
     presetPartyId: Int? = null,
     onClose: () -> Unit = {},
+    onSavedOpenPayment: (Int) -> Unit = onOpenPayment,
     viewModel: PaymentsViewModel = viewModel(),
 ) {
-    val launchedForForm = startNew != null
-    var formPartyType by rememberSaveable { mutableStateOf(startNew) }
-
     val allowedTypes = listOfNotNull("shop".takeIf { Session.canSell }, "factory".takeIf { Session.canPurchase })
 
-    formPartyType?.let { partyType ->
-        if (viewModel.isLoading) {
+    if (startNew != null && allowedTypes.isNotEmpty()) {
+        LaunchedEffect(Unit) { viewModel.startForm() }
+        if (viewModel.isFormLoading) {
             LoadingBox()
             return
         }
         PaymentFormScreen(
             viewModel = viewModel,
-            initialPartyType = partyType,
+            initialPartyType = startNew,
             allowedTypes = allowedTypes,
             presetPartyId = presetPartyId,
-            onBack = { if (launchedForForm) onClose() else formPartyType = null },
-            onSaved = { payment, failed ->
-                formPartyType = null
-                when {
-                    failed > 0 -> onOpenPayment(payment.ID)
-                    launchedForForm -> onClose()
-                }
-            },
+            onBack = onClose,
+            onSaved = { payment, failed -> if (failed > 0) onSavedOpenPayment(payment.ID) else onClose() },
         )
+        viewModel.saved?.let { share -> SavedSheet(share, onDone = viewModel::finishSaved) }
         return
     }
 
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.startList() }
+    val list = viewModel.list
     Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
         floatingActionButton = {
             if (allowedTypes.isNotEmpty()) {
-                FloatingActionButton(onClick = { formPartyType = allowedTypes.first() }) {
+                FloatingActionButton(onClick = { onNewPayment(viewModel.partyFilter ?: allowedTypes.first()) }) {
                     Icon(Icons.Default.Add, contentDescription = "Record payment")
                 }
             }
         },
     ) { padding ->
-        when {
-            viewModel.isLoading -> LoadingBox(modifier = Modifier.padding(padding))
-            viewModel.errorMessage != null && viewModel.payments.isEmpty() ->
-                ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load, modifier = Modifier.padding(padding))
-            viewModel.payments.isEmpty() ->
-                Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    Text("No payments recorded yet.")
+        // A total only means something for one direction; mixing collections and payouts doesn't.
+        val oneDirection = viewModel.partyFilter != null || allowedTypes.size == 1
+        PagedListContent(
+            list = list,
+            padding = padding,
+            summary = countLabel(list.totalCount, "payment") + if (oneDirection) " · ${money(list.totalAmount)}" else "",
+            emptyText = if (allowedTypes.isNotEmpty()) {
+                "No payments ${list.filter.phrase}. Tap + to record one."
+            } else {
+                "No payments ${list.filter.phrase}."
+            },
+            key = { it.ID },
+            extraFilters = if (allowedTypes.size > 1) {
+                {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item { FilterChip(selected = viewModel.partyFilter == null, onClick = { viewModel.updatePartyFilter(null) }, label = { Text("All") }) }
+                        item { FilterChip(selected = viewModel.partyFilter == "shop", onClick = { viewModel.updatePartyFilter("shop") }, label = { Text("Collected") }) }
+                        item { FilterChip(selected = viewModel.partyFilter == "factory", onClick = { viewModel.updatePartyFilter("factory") }, label = { Text("Paid") }) }
+                    }
                 }
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(viewModel.payments, key = { it.ID }) { payment ->
-                    PaymentRow(
-                        payment,
-                        partyName = viewModel.partyName(payment.PartyType, payment.PartyID),
-                        onClick = { onOpenPayment(payment.ID) },
-                    )
-                }
-            }
+            } else {
+                null
+            },
+        ) { payment ->
+            PaymentRow(
+                payment,
+                partyName = viewModel.partyName(payment.PartyType, payment.PartyID),
+                onClick = { onOpenPayment(payment.ID) },
+            )
         }
     }
 }
@@ -194,12 +210,20 @@ private fun PaymentFormScreen(
     val partyId = if (isCustomer) selectedShop?.ID else selectedFactory?.ID
     LaunchedEffect(partyType, partyId) { viewModel.loadBalance(partyType, partyId) }
 
+    val pending = viewModel.selectedBalance?.toDoubleOrNull()
+    val amountValue = amount.toDoubleOrNull()
+    val isDirty = amount.isNotBlank() || notes.isNotBlank() || photos.isNotEmpty()
+    var confirmDiscard by remember { mutableStateOf(false) }
+    val requestBack = { if (isDirty) confirmDiscard = true else onBack() }
+    BackHandler(enabled = !viewModel.isSubmitting && viewModel.saved == null) { requestBack() }
+    if (confirmDiscard) DiscardDialog(onDiscard = { confirmDiscard = false; onBack() }, onKeep = { confirmDiscard = false })
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (isCustomer) "Collect money" else "Pay supplier") },
                 navigationIcon = {
-                    IconButton(onClick = onBack, enabled = !viewModel.isSubmitting) {
+                    IconButton(onClick = requestBack, enabled = !viewModel.isSubmitting) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -225,19 +249,21 @@ private fun PaymentFormScreen(
             }
             item {
                 if (isCustomer) {
-                    DropdownField(
+                    SearchablePickerField(
                         label = Terms.CUSTOMER,
                         options = viewModel.shops,
                         selected = selectedShop,
                         optionLabel = { it.Name },
+                        optionDetail = { listOfNotNull(it.PrimaryPhone, it.Area?.takeIf(String::isNotBlank)).joinToString(" · ") },
                         onSelect = { selectedShop = it },
                     )
                 } else {
-                    DropdownField(
+                    SearchablePickerField(
                         label = Terms.SUPPLIER,
                         options = viewModel.factories,
                         selected = selectedFactory,
                         optionLabel = { it.Name },
+                        optionDetail = { listOfNotNull(it.ContactPerson?.takeIf(String::isNotBlank), it.PrimaryPhone).joinToString(" · ") },
                         onSelect = { selectedFactory = it },
                     )
                 }
@@ -258,12 +284,25 @@ private fun PaymentFormScreen(
                 }
             }
             item {
+                // Most collections clear the whole due, so one tap fills it in; going over the
+                // pending amount is allowed (it becomes an advance) but is called out.
+                val overPending = pending != null && pending > 0 && amountValue != null && amountValue > pending + 0.005
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
                     label = { Text("Amount") },
                     prefix = { Text("₹") },
                     singleLine = true,
+                    trailingIcon = {
+                        if (pending != null && pending > 0) {
+                            TextButton(onClick = { amount = String.format(java.util.Locale.US, "%.2f", pending) }) { Text("Full") }
+                        }
+                    },
+                    supportingText = if (overPending) {
+                        { Text("${money(amountValue - pending)} more than pending - it will be kept as an advance") }
+                    } else {
+                        null
+                    },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -289,10 +328,18 @@ private fun PaymentFormScreen(
             }
             item { PhotoPickerRow(photos = photos, onPhotosChange = { photos = it }) }
             item { InlineError(viewModel.errorMessage) }
+            // Cycle 5 "Require photo for payments": enforced here, since photos upload only
+            // after the payment is created and so the backend can't check it.
+            val photoMissing = viewModel.requirePhoto && photos.isEmpty()
+            if (photoMissing) {
+                item {
+                    Text(Messages.PHOTO_REQUIRED, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
             item {
-                val amountValue = amount.toDoubleOrNull()
                 Button(
-                    enabled = !viewModel.isSubmitting && partyId != null && amountValue != null && amountValue > 0,
+                    enabled = !viewModel.isSubmitting && viewModel.saved == null && !photoMissing &&
+                        partyId != null && amountValue != null && amountValue > 0,
                     onClick = {
                         viewModel.addPayment(
                             PaymentInput(
@@ -312,7 +359,13 @@ private fun PaymentFormScreen(
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Text("  ${viewModel.progressMessage ?: "Saving…"}")
                     } else {
-                        Text("Save")
+                        Text(
+                            when {
+                                amountValue == null || amountValue <= 0 -> "Save"
+                                isCustomer -> "Save · collected ${money(amountValue)}"
+                                else -> "Save · paid ${money(amountValue)}"
+                            },
+                        )
                     }
                 }
             }

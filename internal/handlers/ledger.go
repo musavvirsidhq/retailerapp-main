@@ -192,6 +192,8 @@ type ledgerParty struct {
 	Phone          string  `json:"phone"`
 	SecondaryPhone *string `json:"secondary_phone"`
 	Area           *string `json:"area"`
+	// Cycle 5: set when the customer/supplier is archived; the app shows an "Archived" tag.
+	ArchivedAt *time.Time `json:"archived_at"`
 }
 
 type ledgerEntry struct {
@@ -434,7 +436,7 @@ func (h *LedgerHandler) CustomerLedger(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := buildLedger(r, ledgerParty{
 		ID: shop.ID, Name: shop.Name, ContactName: textPtr(shop.OwnerName), Phone: shop.PrimaryPhone,
-		SecondaryPhone: textPtr(shop.SecondaryPhone), Area: textPtr(shop.Area),
+		SecondaryPhone: textPtr(shop.SecondaryPhone), Area: textPtr(shop.Area), ArchivedAt: timePtr(shop.ArchivedAt),
 	}, entries)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -498,7 +500,7 @@ func (h *LedgerHandler) SupplierLedger(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := buildLedger(r, ledgerParty{
 		ID: factory.ID, Name: factory.Name, ContactName: textPtr(factory.ContactPerson), Phone: factory.PrimaryPhone,
-		SecondaryPhone: textPtr(factory.SecondaryPhone), Area: textPtr(factory.Address),
+		SecondaryPhone: textPtr(factory.SecondaryPhone), Area: textPtr(factory.Address), ArchivedAt: timePtr(factory.ArchivedAt),
 	}, entries)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

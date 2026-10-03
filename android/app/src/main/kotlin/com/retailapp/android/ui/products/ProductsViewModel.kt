@@ -15,54 +15,36 @@ import com.retailapp.android.data.model.ProductInput
 import com.retailapp.android.data.model.Subcategory
 import com.retailapp.android.data.model.UnitDto
 import com.retailapp.android.data.remote.NetworkModule
+import com.retailapp.android.ui.common.DataChanges
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
-class ProductsViewModel : ViewModel() {
-    private val productApi = NetworkModule.productApi
-    private val categoryApi = NetworkModule.categoryApi
-    private val unitApi = NetworkModule.unitApi
+/** Category/subcategory/unit lists and "+ New category" for the product form; shared with EditProductViewModel. */
+open class ProductFormViewModel : ViewModel(), ProductFormSource {
+    protected val productApi = NetworkModule.productApi
+    protected val categoryApi = NetworkModule.categoryApi
+    protected val unitApi = NetworkModule.unitApi
 
-    var products by mutableStateOf<List<Product>>(emptyList())
+    final override var categories by mutableStateOf<List<Category>>(emptyList())
+        protected set
+    final override var subcategories by mutableStateOf<List<Subcategory>>(emptyList())
         private set
-    var categories by mutableStateOf<List<Category>>(emptyList())
-        private set
-    var subcategories by mutableStateOf<List<Subcategory>>(emptyList())
-        private set
-    var units by mutableStateOf<List<UnitDto>>(emptyList())
-        private set
-    var isLoading by mutableStateOf(true)
-        private set
+    final override var units by mutableStateOf<List<UnitDto>>(emptyList())
+        protected set
     var errorMessage by mutableStateOf<String?>(null)
-        private set
-    var isSubmitting by mutableStateOf(false)
-        private set
-
-    init {
-        load()
-    }
-
-    fun load() {
-        viewModelScope.launch {
-            isLoading = true
-            errorMessage = null
-            coroutineScope {
-                val productsDeferred = async { NetworkModule.safeCall { productApi.listProducts() } }
-                val categoriesDeferred = async { NetworkModule.safeCall { categoryApi.listCategories() } }
-                val unitsDeferred = async { NetworkModule.safeCall { unitApi.listUnits() } }
-
-                productsDeferred.await().onSuccess { products = it }.onFailure { errorMessage = it.message }
-                categoriesDeferred.await().onSuccess { categories = it }
-                unitsDeferred.await().onSuccess { units = it }
-            }
-            isLoading = false
-        }
-    }
+        protected set
 
     fun categoryName(categoryId: Int) = categories.find { it.ID == categoryId }?.Name ?: "Unknown"
 
-    fun loadSubcategories(categoryId: Int) {
+    protected suspend fun loadLookups() = coroutineScope {
+        val categoriesDeferred = async { NetworkModule.safeCall { categoryApi.listCategories() } }
+        val unitsDeferred = async { NetworkModule.safeCall { unitApi.listUnits() } }
+        categoriesDeferred.await().onSuccess { categories = it }
+        unitsDeferred.await().onSuccess { units = it }
+    }
+
+    final override fun loadSubcategories(categoryId: Int) {
         viewModelScope.launch {
             NetworkModule.safeCall { categoryApi.listSubcategories(categoryId) }
                 .onSuccess { subcategories = it }
@@ -70,7 +52,7 @@ class ProductsViewModel : ViewModel() {
         }
     }
 
-    fun addCategory(name: String, onDone: (Category?) -> Unit) {
+    final override fun addCategory(name: String, onDone: (Category?) -> Unit) {
         viewModelScope.launch {
             NetworkModule.safeCall { categoryApi.createCategory(CreateCategoryRequest(name)) }
                 .onSuccess { created ->
@@ -84,7 +66,7 @@ class ProductsViewModel : ViewModel() {
         }
     }
 
-    fun addSubcategory(categoryId: Int, name: String, onDone: (Subcategory?) -> Unit) {
+    final override fun addSubcategory(categoryId: Int, name: String, onDone: (Subcategory?) -> Unit) {
         viewModelScope.launch {
             NetworkModule.safeCall { categoryApi.createSubcategory(categoryId, CreateSubcategoryRequest(name)) }
                 .onSuccess { created ->
@@ -97,6 +79,59 @@ class ProductsViewModel : ViewModel() {
                 }
         }
     }
+}
+
+class ProductsViewModel : ProductFormViewModel() {
+    var products by mutableStateOf<List<Product>>(emptyList())
+        private set
+    var isLoading by mutableStateOf(true)
+        private set
+    var isRefreshing by mutableStateOf(false)
+        private set
+    var isSubmitting by mutableStateOf(false)
+        private set
+
+    /** Cycle 5 "Show archived": archived products are listed greyed, with Restore. */
+    var showArchived by mutableStateOf(false)
+        private set
+
+    private var seenVersion = -1
+
+    val visibleProducts: List<Product>
+        get() = if (showArchived) products.sortedBy { it.isArchived } else products.filter { !it.isArchived }
+
+    init {
+        load()
+    }
+
+    fun load(pull: Boolean = false) {
+        viewModelScope.launch {
+            seenVersion = DataChanges.version
+            if (pull) isRefreshing = true else isLoading = products.isEmpty()
+            errorMessage = null
+            coroutineScope {
+                val productsDeferred = async { NetworkModule.safeCall { productApi.listProducts(includeArchived = showArchived.takeIf { it }) } }
+                val lookups = async { loadLookups() }
+                productsDeferred.await().onSuccess { products = it }.onFailure { errorMessage = it.message }
+                lookups.await()
+            }
+            isLoading = false
+            isRefreshing = false
+        }
+    }
+
+    fun refreshIfChanged() {
+        if (seenVersion != DataChanges.version) load()
+    }
+
+    fun toggleShowArchived() {
+        showArchived = !showArchived
+        load()
+    }
+
+    fun clearError() {
+        errorMessage = null
+    }
 
     fun addProduct(input: ProductInput, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
@@ -105,10 +140,12 @@ class ProductsViewModel : ViewModel() {
             NetworkModule.safeCall { productApi.createProduct(input) }
                 .onSuccess { created ->
                     products = products + created
+                    DataChanges.bump()
+                    seenVersion = DataChanges.version
                     onDone(true)
                 }
                 .onFailure {
-                    errorMessage = it.message
+                    errorMessage = if (isSkuConflict(it.message)) archivedSkuMessage(input.sku) ?: it.message else it.message
                     onDone(false)
                 }
             isSubmitting = false
@@ -123,16 +160,25 @@ class ProductsViewModel : ViewModel() {
         viewModelScope.launch {
             val pin = !product.Pinned
             NetworkModule.safeCall { if (pin) productApi.pin(product.ID) else productApi.unpin(product.ID) }
-                .onSuccess { products = products.map { if (it.ID == product.ID) it.copy(Pinned = pin) else it } }
+                .onSuccess {
+                    products = products.map { if (it.ID == product.ID) it.copy(Pinned = pin) else it }
+                    DataChanges.bump()
+                    seenVersion = DataChanges.version
+                }
                 .onFailure { Toast.makeText(RetailApp.instance, it.message, Toast.LENGTH_LONG).show() }
         }
     }
 
-    fun deleteProduct(id: Int) {
+    /** Company Admin only; the backend refuses anyone else. */
+    fun restore(product: Product) {
         viewModelScope.launch {
-            NetworkModule.safeCall { productApi.deleteProduct(id) }
-                .onSuccess { products = products.filter { it.ID != id } }
-                .onFailure { errorMessage = it.message }
+            NetworkModule.safeCall { productApi.restoreProduct(product.ID) }
+                .onSuccess {
+                    DataChanges.bump()
+                    Toast.makeText(RetailApp.instance, "${product.Name} restored", Toast.LENGTH_SHORT).show()
+                    load()
+                }
+                .onFailure { Toast.makeText(RetailApp.instance, "Couldn't restore: ${it.message}", Toast.LENGTH_LONG).show() }
         }
     }
 }

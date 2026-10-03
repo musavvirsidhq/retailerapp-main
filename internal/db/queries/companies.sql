@@ -15,3 +15,11 @@ SELECT * FROM companies ORDER BY joining_date DESC;
 -- name: UpdateCompanyStatus :one
 UPDATE companies SET status = $2, modified_on = now(), modified_by = $3 WHERE id = $1
 RETURNING *;
+
+-- name: GetCompanySettings :one
+-- Cycle 5 company settings.
+SELECT require_payment_photo FROM companies WHERE id = $1;
+
+-- name: UpdateCompanySettings :one
+UPDATE companies SET require_payment_photo = $2, modified_on = now(), modified_by = $3 WHERE id = $1
+RETURNING require_payment_photo;

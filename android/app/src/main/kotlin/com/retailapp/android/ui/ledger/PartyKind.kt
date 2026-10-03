@@ -6,6 +6,7 @@ import android.net.Uri
 import com.retailapp.android.data.remote.AttachmentEntity
 import com.retailapp.android.session.Session
 import com.retailapp.android.ui.common.Terms
+import com.retailapp.android.ui.common.whatsAppDigits
 
 /**
  * Customers and suppliers share one set of dues/ledger screens; this holds everything that
@@ -73,8 +74,7 @@ fun dialPhone(context: Context, phone: String) {
 
 /** Opens a WhatsApp chat with [message] pre-filled. A bare 10-digit number is taken as Indian. */
 fun openWhatsApp(context: Context, phone: String, message: String) {
-    var digits = phone.filter { it.isDigit() }
-    if (digits.length == 10) digits = "91$digits"
+    val digits = whatsAppDigits(phone)
     try {
         val uri = Uri.parse("https://wa.me/$digits?text=${Uri.encode(message)}")
         context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

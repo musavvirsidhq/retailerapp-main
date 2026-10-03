@@ -28,9 +28,51 @@ type paymentInput struct {
 	Notes       string  `json:"notes"`
 }
 
+// List returns every payment, newest first - or, with any of the Cycle 5 params
+// (?from=&to=&party_type=&limit=&offset=), the filtered page plus X-Total-* headers when paged.
 func (h *PaymentHandler) List(w http.ResponseWriter, r *http.Request) {
-	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
-	payments, err := h.Queries.ListPayments(r.Context(), companyID)
+	ctx := r.Context()
+	companyID, _ := appMiddleware.CompanyIDFromContext(ctx)
+	f, err := parseListFilters(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	partyType := pgtype.Text{}
+	if pt := r.URL.Query().Get("party_type"); pt != "" {
+		if pt != "shop" && pt != "factory" {
+			http.Error(w, "party_type must be 'shop' or 'factory'", http.StatusBadRequest)
+			return
+		}
+		partyType = pgtype.Text{String: pt, Valid: true}
+		f.Any = true
+	}
+	if f.Any {
+		payments, err := h.Queries.ListPaymentsFiltered(ctx, db.ListPaymentsFilteredParams{
+			CompanyID: companyID, FromDate: f.From, ToDate: f.To, PartyType: partyType, RowLimit: f.Limit, RowOffset: f.Offset,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if f.Limit.Valid {
+			totals, err := h.Queries.PaymentsFilteredTotals(ctx, db.PaymentsFilteredTotalsParams{
+				CompanyID: companyID, FromDate: f.From, ToDate: f.To, PartyType: partyType,
+			})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeListTotals(w, totals.TotalCount, totals.TotalAmount)
+		}
+		if payments == nil {
+			payments = []db.Payment{}
+		}
+		writeJSON(w, payments)
+		return
+	}
+
+	payments, err := h.Queries.ListPayments(ctx, companyID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -69,14 +111,27 @@ func (h *PaymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	// party_id has no foreign key (it points at shops or factories), so check it here to keep
 	// a payment from being recorded against another company's party.
+	// Archived parties can't take new payments (Cycle 5 section 3.3 rule 3).
 	if in.PartyType == "shop" {
-		if _, err := h.Queries.GetShop(r.Context(), db.GetShopParams{ID: in.PartyID, CompanyID: companyID}); err != nil {
+		shop, err := h.Queries.GetShop(r.Context(), db.GetShopParams{ID: in.PartyID, CompanyID: companyID})
+		if err != nil {
 			http.Error(w, "customer not found", http.StatusBadRequest)
 			return
 		}
-	} else if _, err := h.Queries.GetFactory(r.Context(), db.GetFactoryParams{ID: in.PartyID, CompanyID: companyID}); err != nil {
-		http.Error(w, "supplier not found", http.StatusBadRequest)
-		return
+		if shop.ArchivedAt.Valid {
+			http.Error(w, "customer "+shop.Name+" is archived; restore them before recording a payment", http.StatusBadRequest)
+			return
+		}
+	} else {
+		factory, err := h.Queries.GetFactory(r.Context(), db.GetFactoryParams{ID: in.PartyID, CompanyID: companyID})
+		if err != nil {
+			http.Error(w, "supplier not found", http.StatusBadRequest)
+			return
+		}
+		if factory.ArchivedAt.Valid {
+			http.Error(w, "supplier "+factory.Name+" is archived; restore them before recording a payment", http.StatusBadRequest)
+			return
+		}
 	}
 
 	payment, err := h.Queries.CreatePayment(r.Context(), db.CreatePaymentParams{

@@ -17,7 +17,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -30,12 +37,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,6 +59,7 @@ import com.retailapp.android.RetailApp
 import com.retailapp.android.data.model.DuesResponse
 import com.retailapp.android.data.model.DuesRow
 import com.retailapp.android.data.remote.NetworkModule
+import com.retailapp.android.session.RemindedStore
 import com.retailapp.android.ui.common.ErrorBox
 import com.retailapp.android.ui.common.LoadingBox
 import com.retailapp.android.ui.common.money
@@ -77,6 +88,8 @@ class DuesViewModel(private val kind: PartyKind) : ViewModel() {
         private set
     var isLoading by mutableStateOf(true)
         private set
+    var isRefreshing by mutableStateOf(false)
+        private set
     var errorMessage by mutableStateOf<String?>(null)
         private set
     var sort by mutableStateOf(DuesSort.entries.find { it.api == prefs.getString(sortKey, null) } ?: DuesSort.RECENT)
@@ -92,9 +105,16 @@ class DuesViewModel(private val kind: PartyKind) : ViewModel() {
             return if (q.isEmpty()) rows else rows.filter { it.name.lowercase().contains(q) || it.phone.contains(q) }
         }
 
-    fun load() {
+    private var started = false
+
+    fun loadIfNeeded() {
+        if (!started) load()
+    }
+
+    fun load(pull: Boolean = false) {
+        started = true
         viewModelScope.launch {
-            isLoading = data == null
+            if (pull) isRefreshing = true else isLoading = data == null
             errorMessage = null
             NetworkModule.safeCall {
                 if (kind == PartyKind.CUSTOMER) {
@@ -106,6 +126,7 @@ class DuesViewModel(private val kind: PartyKind) : ViewModel() {
                 .onSuccess { data = it }
                 .onFailure { errorMessage = it.message }
             isLoading = false
+            isRefreshing = false
         }
     }
 
@@ -121,20 +142,56 @@ class DuesViewModel(private val kind: PartyKind) : ViewModel() {
     }
 }
 
+/**
+ * The Cycle 5 "Dues" bottom-bar tab: Customer Dues, with a toggle to Supplier Dues for staff who
+ * can see both. The chosen side survives switching tabs.
+ */
 @Composable
-fun DuesScreen(kind: PartyKind, onBack: () -> Unit, onOpenLedger: (Int) -> Unit) {
+fun DuesTabScreen(onOpenLedger: (PartyKind, Int) -> Unit, onSendReminders: () -> Unit) {
+    val kinds = PartyKind.entries.filter { it.hasAccess }
+    if (kinds.isEmpty()) return
+    var kindName by rememberSaveable { mutableStateOf(kinds.first().name) }
+    val kind = kinds.find { it.name == kindName } ?: kinds.first()
+    DuesScreen(
+        kind = kind,
+        onBack = null,
+        onOpenLedger = { onOpenLedger(kind, it) },
+        kindOptions = kinds,
+        onKindChange = { kindName = it.name },
+        onSendReminders = onSendReminders,
+    )
+}
+
+/**
+ * Who owes what. [onBack] is null when shown as the Dues tab. [onSendReminders] adds the
+ * Cycle 5 "Send reminders" button on the customer side.
+ */
+@Composable
+fun DuesScreen(
+    kind: PartyKind,
+    onBack: (() -> Unit)?,
+    onOpenLedger: (Int) -> Unit,
+    kindOptions: List<PartyKind> = emptyList(),
+    onKindChange: (PartyKind) -> Unit = {},
+    onSendReminders: (() -> Unit)? = null,
+) {
     val viewModel: DuesViewModel = viewModel(key = "dues-${kind.name}", factory = DuesViewModel.Factory(kind))
     var sortMenuOpen by remember { mutableStateOf(false) }
 
     // Reload whenever the screen comes back into view, e.g. after collecting money in a ledger.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.load() }
+    // The tab's toggle swaps the ViewModel without a resume, so load that side too.
+    LaunchedEffect(kind) { viewModel.loadIfNeeded() }
 
     Scaffold(
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Text(kind.duesTitle) },
+                title = { Text(if (onBack == null) "Dues" else kind.duesTitle) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                    }
                 },
                 actions = {
                     Box {
@@ -161,10 +218,27 @@ fun DuesScreen(kind: PartyKind, onBack: () -> Unit, onOpenLedger: (Int) -> Unit)
             viewModel.isLoading -> LoadingBox(modifier = Modifier.padding(padding))
             viewModel.errorMessage != null && data == null ->
                 ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load, modifier = Modifier.padding(padding))
-            data != null -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+            data != null -> PullToRefreshBox(
+                isRefreshing = viewModel.isRefreshing,
+                onRefresh = { viewModel.load(pull = true) },
+                modifier = Modifier.fillMaxSize().padding(padding),
+            ) { LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                if (kindOptions.size > 1) {
+                    item {
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                            kindOptions.forEachIndexed { index, option ->
+                                SegmentedButton(
+                                    selected = option == kind,
+                                    onClick = { onKindChange(option) },
+                                    shape = SegmentedButtonDefaults.itemShape(index, kindOptions.size),
+                                ) { Text(option.plural) }
+                            }
+                        }
+                    }
+                }
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -174,6 +248,14 @@ fun DuesScreen(kind: PartyKind, onBack: () -> Unit, onOpenLedger: (Int) -> Unit)
                             Text(kind.duesLabel, style = MaterialTheme.typography.labelLarge)
                             Text(money(data.total_pending), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                             Text("${data.pending_count} ${kind.plural.lowercase()} with a pending balance", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                if (kind == PartyKind.CUSTOMER && onSendReminders != null && data.pending_count > 0) {
+                    item {
+                        OutlinedButton(onClick = onSendReminders, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text("  Send reminders")
                         }
                     }
                 }
@@ -209,15 +291,21 @@ fun DuesScreen(kind: PartyKind, onBack: () -> Unit, onOpenLedger: (Int) -> Unit)
                         )
                     }
                 }
-                items(rows, key = { it.id }) { row -> DuesRowCard(row, onClick = { onOpenLedger(row.id) }) }
+                items(rows, key = { it.id }) { row ->
+                    DuesRowCard(
+                        row,
+                        remindedToday = kind == PartyKind.CUSTOMER && RemindedStore.remindedToday(row.id),
+                        onClick = { onOpenLedger(row.id) },
+                    )
+                }
                 item { Box(modifier = Modifier.padding(8.dp)) }
-            }
+            } }
         }
     }
 }
 
 @Composable
-private fun DuesRowCard(row: DuesRow, onClick: () -> Unit) {
+private fun DuesRowCard(row: DuesRow, remindedToday: Boolean, onClick: () -> Unit) {
     val balance = row.balance.toDoubleOrNull() ?: 0.0
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -235,6 +323,9 @@ private fun DuesRowCard(row: DuesRow, onClick: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (remindedToday) {
+                    Text("Reminded today", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 when {

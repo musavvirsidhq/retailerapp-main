@@ -150,6 +150,97 @@ func (q *Queries) ListPaymentsByParty(ctx context.Context, arg ListPaymentsByPar
 	return items, nil
 }
 
+const listPaymentsFiltered = `-- name: ListPaymentsFiltered :many
+SELECT id, company_id, party_type, party_id, amount, payment_mode, payment_date, notes, created_by, created_at FROM payments
+WHERE company_id = $1
+  AND ($2::date IS NULL OR payment_date >= $2::date)
+  AND ($3::date IS NULL OR payment_date <= $3::date)
+  AND ($4::text IS NULL OR party_type = $4::text)
+ORDER BY payment_date DESC, id DESC
+LIMIT $6::int OFFSET $5::int
+`
+
+type ListPaymentsFilteredParams struct {
+	CompanyID int32
+	FromDate  pgtype.Date
+	ToDate    pgtype.Date
+	PartyType pgtype.Text
+	RowOffset int32
+	RowLimit  pgtype.Int4
+}
+
+// Cycle 5 list filters: ?from=&to= (payment_date), ?party_type=shop|factory, ?limit=&offset=.
+func (q *Queries) ListPaymentsFiltered(ctx context.Context, arg ListPaymentsFilteredParams) ([]Payment, error) {
+	rows, err := q.db.Query(ctx, listPaymentsFiltered,
+		arg.CompanyID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.PartyType,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Payment
+	for rows.Next() {
+		var i Payment
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.PartyType,
+			&i.PartyID,
+			&i.Amount,
+			&i.PaymentMode,
+			&i.PaymentDate,
+			&i.Notes,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const paymentsFilteredTotals = `-- name: PaymentsFilteredTotals :one
+SELECT COUNT(*)::int AS total_count, COALESCE(SUM(amount), 0)::numeric(12,2) AS total_amount
+FROM payments
+WHERE company_id = $1
+  AND ($2::date IS NULL OR payment_date >= $2::date)
+  AND ($3::date IS NULL OR payment_date <= $3::date)
+  AND ($4::text IS NULL OR party_type = $4::text)
+`
+
+type PaymentsFilteredTotalsParams struct {
+	CompanyID int32
+	FromDate  pgtype.Date
+	ToDate    pgtype.Date
+	PartyType pgtype.Text
+}
+
+type PaymentsFilteredTotalsRow struct {
+	TotalCount  int32
+	TotalAmount pgtype.Numeric
+}
+
+func (q *Queries) PaymentsFilteredTotals(ctx context.Context, arg PaymentsFilteredTotalsParams) (PaymentsFilteredTotalsRow, error) {
+	row := q.db.QueryRow(ctx, paymentsFilteredTotals,
+		arg.CompanyID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.PartyType,
+	)
+	var i PaymentsFilteredTotalsRow
+	err := row.Scan(&i.TotalCount, &i.TotalAmount)
+	return i, err
+}
+
 const shopBalance = `-- name: ShopBalance :one
 SELECT
   (

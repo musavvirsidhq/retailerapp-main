@@ -27,6 +27,8 @@ data class LedgerParty(
     val phone: String,
     val secondary_phone: String?,
     val area: String?,
+    // Cycle 5: set once the customer/supplier is archived (null on older backends).
+    val archived_at: String? = null,
 )
 
 data class LedgerSummary(

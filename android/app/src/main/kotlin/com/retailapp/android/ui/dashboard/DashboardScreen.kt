@@ -1,8 +1,14 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.retailapp.android.ui.dashboard
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import com.retailapp.android.ui.common.money
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,6 +49,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -57,7 +64,6 @@ import com.retailapp.android.ui.common.ErrorBox
 import com.retailapp.android.ui.common.LoadingBox
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Locale
 
 /** Where the dashboard's quick actions and drill-downs lead; wired up in MainScreen. */
 class DashboardActions(
@@ -77,8 +83,14 @@ fun DashboardScreen(actions: DashboardActions, viewModel: DashboardViewModel = v
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.load() }
     when {
         viewModel.isLoading -> LoadingBox()
-        viewModel.errorMessage != null && viewModel.data == null -> ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load)
-        viewModel.data != null -> DashboardContent(viewModel.data!!, actions, viewModel.writesBlockedReason)
+        viewModel.errorMessage != null && viewModel.data == null -> ErrorBox(viewModel.errorMessage!!, onRetry = { viewModel.load() })
+        viewModel.data != null -> PullToRefreshBox(
+            isRefreshing = viewModel.isRefreshing,
+            onRefresh = { viewModel.load(pull = true) },
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            DashboardContent(viewModel.data!!, actions, viewModel.writesBlockedReason)
+        }
     }
 }
 
@@ -89,7 +101,8 @@ private fun DashboardContent(data: DashboardData, actions: DashboardActions, wri
     val profitTotal = data.total_profit.toDoubleOrNull() ?: 0.0
 
     LazyColumn(
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         item { GreetingHeader() }
@@ -128,7 +141,7 @@ private fun DashboardContent(data: DashboardData, actions: DashboardActions, wri
         }
 
         item {
-            HeroProfitCard(value = formatCurrency(profitTotal))
+            HeroProfitCard(value = money(profitTotal))
         }
 
         item {
@@ -137,7 +150,7 @@ private fun DashboardContent(data: DashboardData, actions: DashboardActions, wri
                     modifier = Modifier.weight(1f),
                     icon = Icons.Filled.ShoppingCart,
                     label = "Today's Sales",
-                    value = formatCurrency(salesTotal),
+                    value = money(salesTotal),
                     sub = "${data.today_sales.Count} bills",
                     gradient = Brush.linearGradient(listOf(Color(0xFF0D9488), Color(0xFF14B8A6))),
                 )
@@ -145,7 +158,7 @@ private fun DashboardContent(data: DashboardData, actions: DashboardActions, wri
                     modifier = Modifier.weight(1f),
                     icon = Icons.Filled.Inventory2,
                     label = "Today's Purchases",
-                    value = formatCurrency(purchasesTotal),
+                    value = money(purchasesTotal),
                     sub = "${data.today_purchases.Count} bills",
                     gradient = Brush.linearGradient(listOf(Color(0xFFEA580C), Color(0xFFF97316))),
                 )
@@ -257,7 +270,7 @@ private fun DueCard(
             }
             Spacer(Modifier.height(10.dp))
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(formatCurrency(total.toDoubleOrNull() ?: 0.0), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = color)
+            Text(money(total.toDoubleOrNull() ?: 0.0), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = color)
             if (count != null) {
                 Text("$count pending ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -267,7 +280,6 @@ private fun DueCard(
 
 private data class BarEntry(val label: String, val value: Double, val color: Color)
 
-private fun formatCurrency(value: Double): String = "₹" + String.format(Locale.US, "%,.2f", value)
 
 @Composable
 private fun GreetingHeader() {
@@ -277,7 +289,9 @@ private fun GreetingHeader() {
         hour < 17 -> "Good afternoon"
         else -> "Good evening"
     }
-    val today = SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Calendar.getInstance().time)
+    // The configuration locale, so the date re-formats if the phone language changes.
+    val locale = LocalConfiguration.current.locales[0]
+    val today = SimpleDateFormat("EEEE, d MMMM", locale).format(Calendar.getInstance().time)
 
     Column {
         Text(greeting, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -404,7 +418,7 @@ private fun DuesChartCard(items: List<DueItem>, color: Color, onClickItem: (Int)
         Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Total outstanding", style = MaterialTheme.typography.labelMedium)
-                Text(formatCurrency(total), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = color)
+                Text(money(total), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = color)
             }
             items.forEachIndexed { index, item ->
                 BarRow(item.Name, balances[index], max, color, modifier = Modifier.clickable { onClickItem(item.ID) })
@@ -418,7 +432,7 @@ private fun BarRow(label: String, value: Double, max: Double, color: Color, modi
     Column(modifier = modifier) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(formatCurrency(value), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Text(money(value), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(6.dp))
         Box(

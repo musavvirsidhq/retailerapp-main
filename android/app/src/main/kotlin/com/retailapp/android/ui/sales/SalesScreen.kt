@@ -3,6 +3,7 @@
 package com.retailapp.android.ui.sales
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +42,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -53,75 +56,90 @@ import com.retailapp.android.data.model.SaleItemInput
 import com.retailapp.android.data.model.Shop
 import com.retailapp.android.session.Session
 import com.retailapp.android.ui.common.BillLine
-import com.retailapp.android.ui.common.DropdownField
+import com.retailapp.android.ui.common.DiscardDialog
 import com.retailapp.android.ui.common.ErrorBox
 import com.retailapp.android.ui.common.InlineError
 import com.retailapp.android.ui.common.LoadingBox
+import com.retailapp.android.ui.common.PagedListContent
 import com.retailapp.android.ui.common.PhotoPickerRow
+import com.retailapp.android.ui.common.SavedSheet
+import com.retailapp.android.ui.common.ScanButton
+import com.retailapp.android.ui.common.countLabel
+import com.retailapp.android.ui.common.displayDate
+import com.retailapp.android.ui.common.rememberBillScanner
 import com.retailapp.android.ui.common.QuickItemsStrip
+import com.retailapp.android.ui.common.SearchablePickerField
 import com.retailapp.android.ui.common.Terms
 import com.retailapp.android.ui.common.money
+import com.retailapp.android.ui.common.productDetail
 import com.retailapp.android.ui.common.successColor
+import com.retailapp.android.ui.common.trimQty
 import com.retailapp.android.ui.common.withQuickItem
 
 /**
- * Sales list plus the new-sale form. [startNew] opens the form directly (dashboard "+ Sale",
- * a customer ledger's "New sale") with [presetShopId] preselected; [onClose] then goes back.
+ * The sales list, or - when [startNew] - the new-sale form, each as its own navigation entry so
+ * the bottom bar can hide on the form. [presetShopId] preselects a customer (ledger "New sale").
+ * After saving, the "Sale saved" sheet offers WhatsApp / Share PDF; Done closes the form, or
+ * opens the bill via [onSavedOpenBill] when some photos still need uploading.
  */
 @Composable
 fun SalesScreen(
     onOpenBill: (Int) -> Unit,
+    onNewSale: () -> Unit = {},
     startNew: Boolean = false,
     presetShopId: Int? = null,
     onClose: () -> Unit = {},
+    onSavedOpenBill: (Int) -> Unit = onOpenBill,
+    onAddProductFromScan: ((String) -> Unit)? = null,
     viewModel: SalesViewModel = viewModel(),
 ) {
-    var showNewSale by rememberSaveable { mutableStateOf(startNew && Session.canSell) }
-
-    if (showNewSale) {
-        if (viewModel.isLoading) {
+    if (startNew && Session.canSell) {
+        LaunchedEffect(Unit) { viewModel.startForm() }
+        // Picks up a product added from the scanner's "Add product" while this form waited.
+        LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshFormIfChanged() }
+        if (viewModel.isFormLoading) {
             LoadingBox()
             return
         }
         NewSaleScreen(
             viewModel = viewModel,
             presetShopId = presetShopId,
-            onBack = { if (startNew) onClose() else showNewSale = false },
-            onSaved = { sale, failed ->
-                showNewSale = false
-                when {
-                    failed > 0 -> onOpenBill(sale.ID)
-                    startNew -> onClose()
-                }
-            },
+            onBack = onClose,
+            onAddProductFromScan = onAddProductFromScan,
         )
+        viewModel.saved?.let { share ->
+            SavedSheet(share, onDone = {
+                val sale = viewModel.savedSale
+                if (sale != null && viewModel.savedFailedPhotos > 0) onSavedOpenBill(sale.ID) else onClose()
+            })
+        }
         return
     }
 
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.startList() }
+    val list = viewModel.list
     Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
         floatingActionButton = {
             if (Session.canSell) {
-                FloatingActionButton(onClick = { showNewSale = true }) {
+                FloatingActionButton(onClick = onNewSale) {
                     Icon(Icons.Default.Add, contentDescription = "New sale")
                 }
             }
         },
     ) { padding ->
-        when {
-            viewModel.isLoading -> LoadingBox(modifier = Modifier.padding(padding))
-            viewModel.errorMessage != null && viewModel.sales.isEmpty() ->
-                ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load, modifier = Modifier.padding(padding))
-            viewModel.sales.isEmpty() ->
-                Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    Text("No sales yet.")
-                }
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(viewModel.sales, key = { it.ID }) { sale -> SaleRow(sale, onClick = { onOpenBill(sale.ID) }) }
-            }
-        }
+        PagedListContent(
+            list = list,
+            padding = padding,
+            summary = "${countLabel(list.totalCount, "bill")} · ${money(list.totalAmount)}",
+            emptyText = when {
+                list.query.isNotBlank() -> "No sales match \"${list.query.trim()}\"."
+                Session.canSell -> "No sales ${list.filter.phrase}. Tap + to make one."
+                else -> "No sales ${list.filter.phrase}."
+            },
+            key = { it.ID },
+            searchPlaceholder = "Search bill number or ${Terms.CUSTOMER.lowercase()}",
+        ) { sale -> SaleRow(sale, onClick = { onOpenBill(sale.ID) }) }
     }
 }
 
@@ -133,12 +151,12 @@ private fun SaleRow(sale: Sale, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(sale.BillNumber, style = MaterialTheme.typography.titleMedium)
-                Text("${sale.ShopName} · ${sale.PaymentType}", style = MaterialTheme.typography.bodySmall)
+                Text("${sale.ShopName} · ${sale.PaymentType} · ${displayDate(sale.SaleDate)}", style = MaterialTheme.typography.bodySmall)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("₹${sale.TotalAmount}", style = MaterialTheme.typography.bodyMedium)
+                Text(money(sale.TotalAmount), style = MaterialTheme.typography.bodyMedium)
                 Text(
                     sale.Status,
                     color = if (sale.Status == "CANCELLED") MaterialTheme.colorScheme.error else successColor(),
@@ -154,11 +172,13 @@ private fun NewSaleScreen(
     viewModel: SalesViewModel,
     presetShopId: Int?,
     onBack: () -> Unit,
-    onSaved: (Sale, Int) -> Unit,
+    onAddProductFromScan: ((String) -> Unit)?,
 ) {
     val shops = viewModel.shops
     val products = viewModel.products
-    var selectedShop by remember { mutableStateOf<Shop?>(shops.find { it.ID == presetShopId } ?: shops.firstOrNull()) }
+    // No default customer unless one was passed in: defaulting to the first in the list meant a
+    // hurried user could bill the wrong customer without ever touching the field.
+    var selectedShop by remember { mutableStateOf<Shop?>(shops.find { it.ID == presetShopId }) }
     var paymentType by remember { mutableStateOf("cash") }
     var amountPaid by remember { mutableStateOf("") }
     var nextLineId by remember { mutableLongStateOf(1L) }
@@ -171,19 +191,44 @@ private fun NewSaleScreen(
         lineItems = lineItems.map { if (it.id == id) transform(it) else it }
     }
 
-    fun addQuick(productId: Int) {
-        val product = products.find { it.ID == productId } ?: return
+    fun addProduct(product: Product) {
         lineItems = lineItems.withQuickItem(product, product.CurrentSellingPrice) { nextLineId++ }
     }
 
+    fun addQuick(productId: Int) {
+        products.find { it.ID == productId }?.let(::addProduct)
+    }
+
+    // Cycle 5 barcode scanning: a matching SKU adds the item like a quick-item chip.
+    val scan = rememberBillScanner(
+        products = products,
+        onAdd = ::addProduct,
+        onAddProduct = onAddProductFromScan.takeIf { Session.isCompanyAdmin },
+    )
+
     val total = lineItems.sumOf { (it.quantity.toDoubleOrNull() ?: 0.0) * (it.unitPrice.toDoubleOrNull() ?: 0.0) }
+    val paidValue = amountPaid.toDoubleOrNull()
+    val overpaid = paymentType == "credit" && paidValue != null && paidValue > total + 0.005
+    val blocker = when {
+        selectedShop == null -> "Choose a ${Terms.CUSTOMER.lowercase()}"
+        lineItems.any { it.product == null } -> "Choose a product on every item row"
+        !lineItems.all { it.isValid } -> "Enter a quantity and price for every item"
+        overpaid -> "Amount paid can't be more than the bill total"
+        else -> null
+    }
+    val isDirty = lineItems.any { it.product != null } || amountPaid.isNotBlank() || photos.isNotEmpty()
+    var confirmDiscard by remember { mutableStateOf(false) }
+    val requestBack = { if (isDirty) confirmDiscard = true else onBack() }
+    // System back used to leave the Sales screen entirely and silently drop a half-made bill.
+    BackHandler(enabled = !viewModel.isSubmitting && viewModel.saved == null) { requestBack() }
+    if (confirmDiscard) DiscardDialog(onDiscard = { confirmDiscard = false; onBack() }, onKeep = { confirmDiscard = false })
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("New sale") },
                 navigationIcon = {
-                    IconButton(onClick = onBack, enabled = !viewModel.isSubmitting) {
+                    IconButton(onClick = requestBack, enabled = !viewModel.isSubmitting) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -195,11 +240,12 @@ private fun NewSaleScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                DropdownField(
+                SearchablePickerField(
                     label = Terms.CUSTOMER,
                     options = shops,
                     selected = selectedShop,
                     optionLabel = { it.Name },
+                    optionDetail = { listOfNotNull(it.PrimaryPhone, it.Area?.takeIf(String::isNotBlank)).joinToString(" · ") },
                     onSelect = { selectedShop = it },
                 )
             }
@@ -236,6 +282,7 @@ private fun NewSaleScreen(
             item {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     TextButton(onClick = { lineItems = lineItems + BillLine(nextLineId++, null, "", "") }) { Text("+ Add item") }
+                    ScanButton(onClick = scan)
                     Spacer(modifier = Modifier.weight(1f))
                     Text("Total ${money(total)}", style = MaterialTheme.typography.titleMedium)
                 }
@@ -255,14 +302,30 @@ private fun NewSaleScreen(
             }
 
             item {
-                OutlinedTextField(
-                    value = amountPaid,
-                    onValueChange = { amountPaid = it },
-                    label = { Text("Amount paid") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // The backend always records a cash sale as paid in full and ignores amount_paid,
+                // so the box only makes sense for credit - showing it for cash was misleading.
+                if (paymentType == "cash") {
+                    Text(
+                        "Paid in full: ${money(total)}",
+                        color = successColor(),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = amountPaid,
+                        onValueChange = { amountPaid = it },
+                        label = { Text("Amount paid now") },
+                        prefix = { Text("₹") },
+                        singleLine = true,
+                        isError = overpaid,
+                        supportingText = {
+                            val due = total - (paidValue ?: 0.0)
+                            Text(if (overpaid) "More than the bill total" else "Balance added to ${Terms.CUSTOMER.lowercase()}'s dues: ${money(due.coerceAtLeast(0.0))}")
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
 
             item { PhotoPickerRow(photos = photos, onPhotosChange = { photos = it }) }
@@ -270,13 +333,19 @@ private fun NewSaleScreen(
             item { InlineError(viewModel.errorMessage) }
 
             item {
+                if (blocker != null && !viewModel.isSubmitting) {
+                    Text(blocker, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            item {
                 Button(
-                    enabled = !viewModel.isSubmitting && selectedShop != null && lineItems.all { it.isValid },
+                    enabled = !viewModel.isSubmitting && viewModel.saved == null && blocker == null,
                     onClick = {
                         viewModel.createSale(
                             SaleInput(
                                 shop_id = selectedShop!!.ID,
-                                amount_paid = amountPaid.toDoubleOrNull() ?: 0.0,
+                                amount_paid = if (paymentType == "cash") total else paidValue ?: 0.0,
                                 payment_type = paymentType,
                                 items = lineItems.map {
                                     SaleItemInput(
@@ -287,7 +356,6 @@ private fun NewSaleScreen(
                                 },
                             ),
                             photos,
-                            onDone = onSaved,
                         )
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -296,7 +364,7 @@ private fun NewSaleScreen(
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Text("  ${viewModel.progressMessage ?: "Saving…"}")
                     } else {
-                        Text("Create sale")
+                        Text("Create sale · ${money(total)}")
                     }
                 }
             }
@@ -318,11 +386,12 @@ private fun LineItemRow(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                DropdownField(
+                SearchablePickerField(
                     label = "Product",
                     options = products,
                     selected = line.product,
                     optionLabel = { it.Name },
+                    optionDetail = { productDetail(it) },
                     onSelect = onProductChange,
                     modifier = Modifier.weight(1f),
                 )
@@ -333,11 +402,22 @@ private fun LineItemRow(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // The backend rejects the whole bill with a generic "insufficient stock" error,
+                // so flag the exact line here before the user submits.
+                val stock = line.product?.CurrentStock?.toDoubleOrNull()
+                val overStock = stock != null && (line.quantity.toDoubleOrNull() ?: 0.0) > stock
                 OutlinedTextField(
                     value = line.quantity,
                     onValueChange = onQuantityChange,
                     label = { Text("Qty") },
+                    suffix = line.product?.let { { Text(it.Unit) } },
                     singleLine = true,
+                    isError = overStock,
+                    supportingText = if (overStock) {
+                        { Text("Only ${trimQty(line.product.CurrentStock)} in stock") }
+                    } else {
+                        null
+                    },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )

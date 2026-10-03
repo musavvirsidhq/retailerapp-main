@@ -14,7 +14,7 @@ import (
 const createCompany = `-- name: CreateCompany :one
 INSERT INTO companies (company_name, company_code, joining_date, created_by)
 VALUES ($1, $2, $3, $4)
-RETURNING id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version
+RETURNING id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version, require_payment_photo
 `
 
 type CreateCompanyParams struct {
@@ -43,12 +43,13 @@ func (q *Queries) CreateCompany(ctx context.Context, arg CreateCompanyParams) (C
 		&i.CreatedBy,
 		&i.ModifiedBy,
 		&i.Version,
+		&i.RequirePaymentPhoto,
 	)
 	return i, err
 }
 
 const getCompanyByCode = `-- name: GetCompanyByCode :one
-SELECT id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version FROM companies WHERE company_code = $1
+SELECT id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version, require_payment_photo FROM companies WHERE company_code = $1
 `
 
 func (q *Queries) GetCompanyByCode(ctx context.Context, companyCode string) (Company, error) {
@@ -65,12 +66,13 @@ func (q *Queries) GetCompanyByCode(ctx context.Context, companyCode string) (Com
 		&i.CreatedBy,
 		&i.ModifiedBy,
 		&i.Version,
+		&i.RequirePaymentPhoto,
 	)
 	return i, err
 }
 
 const getCompanyByID = `-- name: GetCompanyByID :one
-SELECT id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version FROM companies WHERE id = $1
+SELECT id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version, require_payment_photo FROM companies WHERE id = $1
 `
 
 func (q *Queries) GetCompanyByID(ctx context.Context, id int32) (Company, error) {
@@ -87,12 +89,25 @@ func (q *Queries) GetCompanyByID(ctx context.Context, id int32) (Company, error)
 		&i.CreatedBy,
 		&i.ModifiedBy,
 		&i.Version,
+		&i.RequirePaymentPhoto,
 	)
 	return i, err
 }
 
+const getCompanySettings = `-- name: GetCompanySettings :one
+SELECT require_payment_photo FROM companies WHERE id = $1
+`
+
+// Cycle 5 company settings.
+func (q *Queries) GetCompanySettings(ctx context.Context, id int32) (bool, error) {
+	row := q.db.QueryRow(ctx, getCompanySettings, id)
+	var require_payment_photo bool
+	err := row.Scan(&require_payment_photo)
+	return require_payment_photo, err
+}
+
 const listCompanies = `-- name: ListCompanies :many
-SELECT id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version FROM companies ORDER BY joining_date DESC
+SELECT id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version, require_payment_photo FROM companies ORDER BY joining_date DESC
 `
 
 func (q *Queries) ListCompanies(ctx context.Context) ([]Company, error) {
@@ -115,6 +130,7 @@ func (q *Queries) ListCompanies(ctx context.Context) ([]Company, error) {
 			&i.CreatedBy,
 			&i.ModifiedBy,
 			&i.Version,
+			&i.RequirePaymentPhoto,
 		); err != nil {
 			return nil, err
 		}
@@ -126,9 +142,27 @@ func (q *Queries) ListCompanies(ctx context.Context) ([]Company, error) {
 	return items, nil
 }
 
+const updateCompanySettings = `-- name: UpdateCompanySettings :one
+UPDATE companies SET require_payment_photo = $2, modified_on = now(), modified_by = $3 WHERE id = $1
+RETURNING require_payment_photo
+`
+
+type UpdateCompanySettingsParams struct {
+	ID                  int32
+	RequirePaymentPhoto bool
+	ModifiedBy          pgtype.Int4
+}
+
+func (q *Queries) UpdateCompanySettings(ctx context.Context, arg UpdateCompanySettingsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, updateCompanySettings, arg.ID, arg.RequirePaymentPhoto, arg.ModifiedBy)
+	var require_payment_photo bool
+	err := row.Scan(&require_payment_photo)
+	return require_payment_photo, err
+}
+
 const updateCompanyStatus = `-- name: UpdateCompanyStatus :one
 UPDATE companies SET status = $2, modified_on = now(), modified_by = $3 WHERE id = $1
-RETURNING id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version
+RETURNING id, company_name, company_code, status, joining_date, created_on, modified_on, created_by, modified_by, version, require_payment_photo
 `
 
 type UpdateCompanyStatusParams struct {
@@ -151,6 +185,7 @@ func (q *Queries) UpdateCompanyStatus(ctx context.Context, arg UpdateCompanyStat
 		&i.CreatedBy,
 		&i.ModifiedBy,
 		&i.Version,
+		&i.RequirePaymentPhoto,
 	)
 	return i, err
 }

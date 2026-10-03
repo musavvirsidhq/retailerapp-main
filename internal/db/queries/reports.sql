@@ -17,7 +17,7 @@ LEFT JOIN (
   SELECT party_id, SUM(amount) AS paid
   FROM payments WHERE payments.company_id = $1 AND party_type = 'shop' GROUP BY party_id
 ) pay_agg ON pay_agg.party_id = s.id
-WHERE s.company_id = $1
+WHERE s.company_id = $1 AND s.archived_at IS NULL
 ORDER BY balance DESC;
 
 -- name: FactoryPayables :many
@@ -38,7 +38,7 @@ LEFT JOIN (
   SELECT party_id, SUM(amount) AS paid
   FROM payments WHERE payments.company_id = $1 AND party_type = 'factory' GROUP BY party_id
 ) pay_agg ON pay_agg.party_id = f.id
-WHERE f.company_id = $1
+WHERE f.company_id = $1 AND f.archived_at IS NULL
 ORDER BY balance DESC;
 
 -- name: TodaySalesSummary :one
@@ -70,4 +70,4 @@ JOIN sales s ON s.id = si.sale_id
 WHERE s.company_id = $1 AND s.status = 'COMPLETED';
 
 -- name: LowStockProducts :many
-SELECT * FROM products WHERE company_id = $1 AND current_stock < 10 ORDER BY current_stock ASC;
+SELECT * FROM products WHERE company_id = $1 AND current_stock < 10 AND archived_at IS NULL ORDER BY current_stock ASC;

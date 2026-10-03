@@ -1,5 +1,6 @@
 package com.retailapp.android.data.remote
 
+import com.retailapp.android.data.model.CompanySettings
 import com.retailapp.android.data.model.CompanyUser
 import com.retailapp.android.data.model.CreateStaffInput
 import com.retailapp.android.data.model.SubscriptionStatus
@@ -23,6 +24,13 @@ interface CompanyApi {
 
     @PUT("api/company/users/{id}/disable")
     suspend fun disableUser(@Path("id") id: Int): Response<CompanyUser>
+
+    /** Cycle 5 company settings, e.g. "require a photo for payments". */
+    @GET("api/company/settings")
+    suspend fun getSettings(): Response<CompanySettings>
+
+    @PUT("api/company/settings")
+    suspend fun updateSettings(@Body body: CompanySettings): Response<CompanySettings>
 
     @GET("api/company/subscription-status")
     suspend fun getSubscriptionStatus(): Response<SubscriptionStatus>

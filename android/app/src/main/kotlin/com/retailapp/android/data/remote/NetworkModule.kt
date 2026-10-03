@@ -1,8 +1,11 @@
 package com.retailapp.android.data.remote
 
 import coil.ImageLoader
+import com.retailapp.android.BuildConfig
 import com.retailapp.android.RetailApp
 import com.retailapp.android.session.PersistentCookieJar
+import com.retailapp.android.session.Session
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Response
@@ -12,13 +15,12 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Single place to point the app at a different backend: change [BASE_URL] (and the allowed
- * host in res/xml/network_security_config.xml if it's still plain HTTP) and everything else
- * keeps working unchanged.
+ * [BASE_URL] comes from the build type (see app/build.gradle.kts): debug builds may use the
+ * plain-HTTP test server, release builds must be HTTPS. Everything else keeps working unchanged.
  */
 object NetworkModule {
 
-    const val BASE_URL = "http://13.215.157.19/"
+    val BASE_URL: String = BuildConfig.API_BASE_URL
 
     val cookieJar by lazy { PersistentCookieJar(RetailApp.instance) }
 
@@ -28,7 +30,12 @@ object NetworkModule {
             .cookieJar(cookieJar)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
+            // Release builds log nothing: even BASIC would put URLs (and so customer/bill ids) in logcat.
+            .addInterceptor(
+                HttpLoggingInterceptor().apply {
+                    level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
+                },
+            )
             .build()
     }
 
@@ -71,15 +78,38 @@ object NetworkModule {
      * same way, whether it's a non-2xx response (backend errors are plain text bodies, see
      * the internal/handlers Go files' http.Error calls) or a network failure.
      */
-    suspend fun <T> safeCall(block: suspend () -> Response<T>): Result<T> {
+    suspend fun <T> safeCall(block: suspend () -> Response<T>): Result<T> =
+        safeCallWithHeaders(block).map { it.first }
+
+    /**
+     * Like [safeCall], but also hands back the response headers - the Cycle 5 paged lists read
+     * X-Total-Count / X-Total-Amount from them.
+     */
+    suspend fun <T> safeCallWithHeaders(block: suspend () -> Response<T>): Result<Pair<T, Headers>> {
         return try {
             val response = block()
             if (response.isSuccessful) {
                 @Suppress("UNCHECKED_CAST")
-                Result.success((response.body() ?: Unit) as T)
+                Result.success(((response.body() ?: Unit) as T) to response.headers())
+            } else if (response.code() == 401 && Session.currentUser != null) {
+                // The session cookie expired or was revoked. Dropping the user sends RetailAppRoot
+                // back to the login screen instead of leaving every screen showing "unauthorized".
+                cookieJar.clear()
+                Session.currentUser = null
+                Result.failure(Exception("Your session has expired. Please log in again."))
             } else {
-                val message = response.errorBody()?.string()?.takeIf { it.isNotBlank() }
-                    ?: "Request failed (HTTP ${response.code()})"
+                val raw = response.errorBody()?.string()?.trim()?.takeIf { it.isNotBlank() }
+                val message = when {
+                    raw == null -> "Request failed (HTTP ${response.code()})"
+                    // Deletes are hard DELETEs; Postgres refuses them for a record that bills or
+                    // payments still point at, and its raw message means nothing to a shop user.
+                    raw.contains("violates foreign key constraint") ->
+                        "It's used by existing bills or payments, so it can't be deleted."
+                    // e.g. "forbidden: company admin only" when staff try to archive (Cycle 5).
+                    response.code() == 403 && raw.startsWith("forbidden: ") ->
+                        "You don't have permission to do this (${raw.removePrefix("forbidden: ")})."
+                    else -> raw
+                }
                 Result.failure(Exception(message))
             }
         } catch (e: IOException) {

@@ -179,3 +179,51 @@ func redactUsers(users []db.User) []map[string]interface{} {
 	}
 	return out
 }
+
+type companySettings struct {
+	RequirePaymentPhoto bool `json:"require_payment_photo"`
+}
+
+// GetSettings returns the Cycle 5 company settings. Any company user may read them: the
+// Collect / Pay form needs "require photo for payments".
+func (h *CompanyHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := appMiddleware.CompanyIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "no company associated with this user", http.StatusForbidden)
+		return
+	}
+	requirePhoto, err := h.Queries.GetCompanySettings(r.Context(), companyID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, companySettings{RequirePaymentPhoto: requirePhoto})
+}
+
+// UpdateSettings changes the company settings. Company Admin only (section 15).
+func (h *CompanyHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	if !requireCompanyAdmin(w, r) {
+		return
+	}
+	companyID, ok := appMiddleware.CompanyIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "no company associated with this user", http.StatusForbidden)
+		return
+	}
+	userID, _ := appMiddleware.UserIDFromContext(r.Context())
+	var in companySettings
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	requirePhoto, err := h.Queries.UpdateCompanySettings(r.Context(), db.UpdateCompanySettingsParams{
+		ID:                  companyID,
+		RequirePaymentPhoto: in.RequirePaymentPhoto,
+		ModifiedBy:          pgInt4Valid(userID),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, companySettings{RequirePaymentPhoto: requirePhoto})
+}

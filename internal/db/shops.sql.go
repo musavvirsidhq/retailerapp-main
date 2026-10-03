@@ -11,10 +11,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveShop = `-- name: ArchiveShop :one
+UPDATE shops SET archived_at = now(), archived_by = $3
+WHERE id = $1 AND company_id = $2 AND archived_at IS NULL
+RETURNING id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at, archived_at, archived_by
+`
+
+type ArchiveShopParams struct {
+	ID         int32
+	CompanyID  int32
+	ArchivedBy pgtype.Int4
+}
+
+// Cycle 5: soft delete. Old bills, payments and ledgers keep pointing at the row.
+func (q *Queries) ArchiveShop(ctx context.Context, arg ArchiveShopParams) (Shop, error) {
+	row := q.db.QueryRow(ctx, archiveShop, arg.ID, arg.CompanyID, arg.ArchivedBy)
+	var i Shop
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.OwnerName,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
+		&i.Area,
+		&i.OpeningBalance,
+		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+	)
+	return i, err
+}
+
 const createShop = `-- name: CreateShop :one
 INSERT INTO shops (company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at
+RETURNING id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at, archived_at, archived_by
 `
 
 type CreateShopParams struct {
@@ -48,26 +80,14 @@ func (q *Queries) CreateShop(ctx context.Context, arg CreateShopParams) (Shop, e
 		&i.Area,
 		&i.OpeningBalance,
 		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
 
-const deleteShop = `-- name: DeleteShop :exec
-DELETE FROM shops WHERE id = $1 AND company_id = $2
-`
-
-type DeleteShopParams struct {
-	ID        int32
-	CompanyID int32
-}
-
-func (q *Queries) DeleteShop(ctx context.Context, arg DeleteShopParams) error {
-	_, err := q.db.Exec(ctx, deleteShop, arg.ID, arg.CompanyID)
-	return err
-}
-
 const getShop = `-- name: GetShop :one
-SELECT id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at FROM shops WHERE id = $1 AND company_id = $2
+SELECT id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at, archived_at, archived_by FROM shops WHERE id = $1 AND company_id = $2
 `
 
 type GetShopParams struct {
@@ -88,14 +108,17 @@ func (q *Queries) GetShop(ctx context.Context, arg GetShopParams) (Shop, error) 
 		&i.Area,
 		&i.OpeningBalance,
 		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
 
 const listShops = `-- name: ListShops :many
-SELECT id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at FROM shops WHERE company_id = $1 ORDER BY name
+SELECT id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at, archived_at, archived_by FROM shops WHERE company_id = $1 AND archived_at IS NULL ORDER BY name
 `
 
+// Active (non-archived) only: what lists, pickers and new bills may use (Cycle 5).
 func (q *Queries) ListShops(ctx context.Context, companyID int32) ([]Shop, error) {
 	rows, err := q.db.Query(ctx, listShops, companyID)
 	if err != nil {
@@ -115,6 +138,8 @@ func (q *Queries) ListShops(ctx context.Context, companyID int32) ([]Shop, error
 			&i.Area,
 			&i.OpeningBalance,
 			&i.CreatedAt,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -126,11 +151,77 @@ func (q *Queries) ListShops(ctx context.Context, companyID int32) ([]Shop, error
 	return items, nil
 }
 
+const listShopsIncludingArchived = `-- name: ListShopsIncludingArchived :many
+SELECT id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at, archived_at, archived_by FROM shops WHERE company_id = $1 ORDER BY archived_at IS NOT NULL, name
+`
+
+func (q *Queries) ListShopsIncludingArchived(ctx context.Context, companyID int32) ([]Shop, error) {
+	rows, err := q.db.Query(ctx, listShopsIncludingArchived, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Shop
+	for rows.Next() {
+		var i Shop
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.Name,
+			&i.OwnerName,
+			&i.PrimaryPhone,
+			&i.SecondaryPhone,
+			&i.Area,
+			&i.OpeningBalance,
+			&i.CreatedAt,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const restoreShop = `-- name: RestoreShop :one
+UPDATE shops SET archived_at = NULL, archived_by = NULL
+WHERE id = $1 AND company_id = $2 AND archived_at IS NOT NULL
+RETURNING id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at, archived_at, archived_by
+`
+
+type RestoreShopParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) RestoreShop(ctx context.Context, arg RestoreShopParams) (Shop, error) {
+	row := q.db.QueryRow(ctx, restoreShop, arg.ID, arg.CompanyID)
+	var i Shop
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.OwnerName,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
+		&i.Area,
+		&i.OpeningBalance,
+		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+	)
+	return i, err
+}
+
 const updateShop = `-- name: UpdateShop :one
 UPDATE shops
 SET name = $3, owner_name = $4, primary_phone = $5, secondary_phone = $6, area = $7
 WHERE id = $1 AND company_id = $2
-RETURNING id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at
+RETURNING id, company_id, name, owner_name, primary_phone, secondary_phone, area, opening_balance, created_at, archived_at, archived_by
 `
 
 type UpdateShopParams struct {
@@ -164,6 +255,8 @@ func (q *Queries) UpdateShop(ctx context.Context, arg UpdateShopParams) (Shop, e
 		&i.Area,
 		&i.OpeningBalance,
 		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }

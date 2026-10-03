@@ -38,9 +38,42 @@ type saleInput struct {
 	Items       []saleItemInput `json:"items"`
 }
 
+// List returns every sale, newest first - or, with any of the Cycle 5 params
+// (?from=&to=&q=&limit=&offset=), the filtered page plus X-Total-* headers when paged.
 func (h *SaleHandler) List(w http.ResponseWriter, r *http.Request) {
-	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
-	sales, err := h.Queries.ListSales(r.Context(), companyID)
+	ctx := r.Context()
+	companyID, _ := appMiddleware.CompanyIDFromContext(ctx)
+	f, err := parseListFilters(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if f.Any {
+		rows, err := h.Queries.ListSalesFiltered(ctx, db.ListSalesFilteredParams{
+			CompanyID: companyID, FromDate: f.From, ToDate: f.To, Q: f.Q, RowLimit: f.Limit, RowOffset: f.Offset,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if f.Limit.Valid {
+			totals, err := h.Queries.SalesFilteredTotals(ctx, db.SalesFilteredTotalsParams{
+				CompanyID: companyID, FromDate: f.From, ToDate: f.To, Q: f.Q,
+			})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeListTotals(w, totals.TotalCount, totals.TotalAmount)
+		}
+		if rows == nil {
+			rows = []db.ListSalesFilteredRow{}
+		}
+		writeJSON(w, rows)
+		return
+	}
+
+	sales, err := h.Queries.ListSales(ctx, companyID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -109,6 +142,17 @@ func (h *SaleHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	qtx := h.Queries.WithTx(tx)
 
+	// The customer must belong to this company and not be archived (Cycle 5 section 3.3 rule 3).
+	shop, err := qtx.GetShop(ctx, db.GetShopParams{ID: in.ShopID, CompanyID: companyID})
+	if err != nil {
+		http.Error(w, "customer not found", http.StatusBadRequest)
+		return
+	}
+	if shop.ArchivedAt.Valid {
+		http.Error(w, "customer "+shop.Name+" is archived; restore them before billing", http.StatusBadRequest)
+		return
+	}
+
 	billNumber, err := qtx.NextBillNumber(ctx, db.NextBillNumberParams{CompanyID: companyID, BillType: "SALE"})
 	if err != nil {
 		http.Error(w, "failed to allocate bill number: "+err.Error(), http.StatusInternalServerError)
@@ -133,6 +177,11 @@ func (h *SaleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		product, err := qtx.GetProduct(ctx, db.GetProductParams{ID: item.ProductID, CompanyID: companyID})
 		if err != nil {
 			http.Error(w, "product not found", http.StatusBadRequest)
+			return
+		}
+		// Archived products can't go on a new bill (Cycle 5 section 3.3 rule 3).
+		if product.ArchivedAt.Valid {
+			http.Error(w, "product "+product.Name+" is archived; restore it before billing", http.StatusBadRequest)
 			return
 		}
 

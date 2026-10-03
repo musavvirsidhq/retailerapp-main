@@ -13,6 +13,12 @@ import com.retailapp.android.data.model.User
 object Session {
     var currentUser: User? by mutableStateOf(null)
 
+    /**
+     * The company name as printed on bills, remembered from the last bill the app loaded. Used
+     * to sign WhatsApp messages (Cycle 5); null until a bill has been seen this session.
+     */
+    var companyName: String? = null
+
     val isSuperAdmin: Boolean get() = currentUser?.user_type == "SUPER_ADMIN"
     val isCompanyAdmin: Boolean get() = currentUser?.user_type == "COMPANY_ADMIN"
 

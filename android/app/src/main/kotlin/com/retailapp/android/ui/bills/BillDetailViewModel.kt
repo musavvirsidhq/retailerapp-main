@@ -1,10 +1,8 @@
 package com.retailapp.android.ui.bills
 
-import android.content.Intent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -12,8 +10,10 @@ import com.retailapp.android.RetailApp
 import com.retailapp.android.data.model.BillData
 import com.retailapp.android.data.model.CancelRequest
 import com.retailapp.android.data.remote.NetworkModule
+import com.retailapp.android.session.Session
+import com.retailapp.android.ui.common.BillShare
+import com.retailapp.android.ui.common.DataChanges
 import kotlinx.coroutines.launch
-import java.io.File
 
 /** Shared by both sale and purchase bills - [isSale] picks which backend endpoints to call. */
 class BillDetailViewModel(private val id: Int, private val isSale: Boolean) : ViewModel() {
@@ -42,9 +42,15 @@ class BillDetailViewModel(private val id: Int, private val isSale: Boolean) : Vi
         viewModelScope.launch {
             isLoading = true
             errorMessage = null
-            val call = if (isSale) NetworkModule.billApi.getSaleBill(id) else NetworkModule.billApi.getPurchaseBill(id)
-            NetworkModule.safeCall { call }
-                .onSuccess { bill = it }
+            // The request must run inside safeCall: made outside it, an offline phone threw an
+            // uncaught IOException here and crashed the app.
+            NetworkModule.safeCall {
+                if (isSale) NetworkModule.billApi.getSaleBill(id) else NetworkModule.billApi.getPurchaseBill(id)
+            }
+                .onSuccess {
+                    bill = it
+                    Session.companyName = it.CompanyName
+                }
                 .onFailure { errorMessage = it.message }
             isLoading = false
         }
@@ -60,7 +66,11 @@ class BillDetailViewModel(private val id: Int, private val isSale: Boolean) : Vi
                 NetworkModule.safeCall { NetworkModule.purchaseApi.cancelPurchase(id, CancelRequest(reason)) }
             }
             result
-                .onSuccess { load(); onDone(true) }
+                .onSuccess {
+                    DataChanges.bump()
+                    load()
+                    onDone(true)
+                }
                 .onFailure {
                     errorMessage = it.message
                     onDone(false)
@@ -74,33 +84,9 @@ class BillDetailViewModel(private val id: Int, private val isSale: Boolean) : Vi
         viewModelScope.launch {
             isSharing = true
             errorMessage = null
-            val call = if (isSale) NetworkModule.billApi.getSalePdf(id) else NetworkModule.billApi.getPurchasePdf(id)
-            NetworkModule.safeCall { call }
-                .onSuccess { body ->
-                    // File I/O, FileProvider and startActivity can all throw (bad path config,
-                    // no app installed to handle the share sheet, disk full, ...). None of that
-                    // is a network error safeCall already handles, so it must be caught here too
-                    // - left unguarded, any of it previously crashed the whole app on tap.
-                    try {
-                        val app = RetailApp.instance
-                        val dir = File(app.cacheDir, "bills").apply { mkdirs() }
-                        val file = File(dir, "$billNumber.pdf")
-                        file.outputStream().use { out -> body.byteStream().copyTo(out) }
-                        val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
-                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "application/pdf"
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        val chooser = Intent.createChooser(shareIntent, billNumber).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        app.startActivity(chooser)
-                    } catch (e: Exception) {
-                        errorMessage = "Couldn't share the PDF: ${e.message}"
-                    }
-                }
-                .onFailure { errorMessage = it.message }
+            BillShare.downloadPdf(isSale, id, billNumber)
+                .mapCatching { uri -> BillShare.sharePdf(RetailApp.instance, uri, billNumber).getOrThrow() }
+                .onFailure { errorMessage = "Couldn't share the PDF: ${it.message}" }
             isSharing = false
         }
     }

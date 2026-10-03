@@ -35,3 +35,8 @@ data class SubscriptionStatus(
     val warning_level: String?,
     val subscription_type: String?,
 )
+
+/** GET/PUT /api/company/settings (Cycle 5). */
+data class CompanySettings(
+    val require_payment_photo: Boolean,
+)

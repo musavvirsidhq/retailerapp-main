@@ -36,16 +36,17 @@ type Category struct {
 }
 
 type Company struct {
-	ID          int32
-	CompanyName string
-	CompanyCode string
-	Status      string
-	JoiningDate pgtype.Date
-	CreatedOn   pgtype.Timestamptz
-	ModifiedOn  pgtype.Timestamptz
-	CreatedBy   pgtype.Int4
-	ModifiedBy  pgtype.Int4
-	Version     int32
+	ID                  int32
+	CompanyName         string
+	CompanyCode         string
+	Status              string
+	JoiningDate         pgtype.Date
+	CreatedOn           pgtype.Timestamptz
+	ModifiedOn          pgtype.Timestamptz
+	CreatedBy           pgtype.Int4
+	ModifiedBy          pgtype.Int4
+	Version             int32
+	RequirePaymentPhoto bool
 }
 
 type CompanyStorefrontSetting struct {
@@ -66,6 +67,8 @@ type Factory struct {
 	SecondaryPhone pgtype.Text
 	Address        pgtype.Text
 	CreatedAt      pgtype.Timestamptz
+	ArchivedAt     pgtype.Timestamptz
+	ArchivedBy     pgtype.Int4
 }
 
 type Payment struct {
@@ -96,6 +99,8 @@ type Product struct {
 	IsBundle            bool
 	StorefrontVisible   bool
 	Pinned              bool
+	ArchivedAt          pgtype.Timestamptz
+	ArchivedBy          pgtype.Int4
 }
 
 type ProductCostLayer struct {
@@ -222,6 +227,8 @@ type Shop struct {
 	Area           pgtype.Text
 	OpeningBalance pgtype.Numeric
 	CreatedAt      pgtype.Timestamptz
+	ArchivedAt     pgtype.Timestamptz
+	ArchivedBy     pgtype.Int4
 }
 
 type Subcategory struct {

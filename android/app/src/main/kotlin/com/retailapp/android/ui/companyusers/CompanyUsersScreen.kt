@@ -19,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +57,13 @@ fun CompanyUsersScreen(viewModel: CompanyUsersViewModel = viewModel()) {
                 ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load, modifier = Modifier.padding(padding))
             else -> Column(modifier = Modifier.fillMaxSize().padding(padding)) {
                 viewModel.subscriptionStatus?.let { SubscriptionBanner(it) }
+                viewModel.settings?.let { settings ->
+                    SettingsCard(
+                        requirePhoto = settings.require_payment_photo,
+                        enabled = !viewModel.isSavingSettings,
+                        onRequirePhotoChange = viewModel::setRequirePaymentPhoto,
+                    )
+                }
                 if (viewModel.users.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("No staff yet. Tap + to add one.")
@@ -110,6 +118,27 @@ private fun SubscriptionBanner(status: SubscriptionStatus) {
                     "Expires ${status.expiry_date}" + (status.days_remaining?.let { " ($it days left)" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+    }
+}
+
+/** Company-wide settings (Cycle 5 section 10.3). This screen is Company Admin only. */
+@Composable
+private fun SettingsCard(requirePhoto: Boolean, enabled: Boolean, onRequirePhotoChange: (Boolean) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().padding(16.dp, 12.dp, 16.dp, 0.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Settings", style = MaterialTheme.typography.titleSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text("Require photo for payments", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Collect and Pay can't be saved until a receipt photo is added.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = requirePhoto, onCheckedChange = onRequirePhotoChange, enabled = enabled)
             }
         }
     }

@@ -45,7 +45,7 @@ LEFT JOIN (
   SELECT party_id, SUM(amount) AS paid, MAX(created_at) AS last_at
   FROM payments WHERE payments.company_id = $1 AND party_type = 'shop' GROUP BY party_id
 ) pa ON pa.party_id = s.id
-WHERE s.company_id = $1
+WHERE s.company_id = $1 AND s.archived_at IS NULL
 `
 
 type CustomerDuesRow struct {
@@ -100,6 +100,7 @@ SELECT p.id, p.name, p.sku, p.unit, p.current_selling_price, p.current_stock, p.
 FROM sale_items si
 JOIN recent r ON r.id = si.sale_id
 JOIN products p ON p.id = si.product_id
+WHERE p.archived_at IS NULL
 GROUP BY p.id
 ORDER BY uses DESC, p.name
 LIMIT $3
@@ -164,7 +165,7 @@ SELECT p.id, p.name, p.sku, p.unit, p.current_selling_price, p.current_stock, p.
        COALESCE(u.uses, 0)::int AS uses
 FROM products p
 LEFT JOIN usage u ON u.product_id = p.id
-WHERE p.company_id = $1 AND (p.pinned OR u.uses IS NOT NULL)
+WHERE p.company_id = $1 AND p.archived_at IS NULL AND (p.pinned OR u.uses IS NOT NULL)
 ORDER BY p.pinned DESC, u.uses DESC NULLS LAST, u.last_used DESC NULLS LAST, p.name
 LIMIT $2
 `
@@ -226,7 +227,7 @@ SELECT p.id, p.name, p.sku, p.unit, p.current_selling_price, p.current_stock, p.
        COALESCE(u.uses, 0)::int AS uses
 FROM products p
 LEFT JOIN usage u ON u.product_id = p.id
-WHERE p.company_id = $1 AND (p.pinned OR u.uses IS NOT NULL)
+WHERE p.company_id = $1 AND p.archived_at IS NULL AND (p.pinned OR u.uses IS NOT NULL)
 ORDER BY p.pinned DESC, u.uses DESC NULLS LAST, u.last_used DESC NULLS LAST, p.name
 LIMIT $2
 `
@@ -453,7 +454,7 @@ LEFT JOIN (
   SELECT party_id, SUM(amount) AS paid, MAX(created_at) AS last_at
   FROM payments WHERE payments.company_id = $1 AND party_type = 'factory' GROUP BY party_id
 ) pa ON pa.party_id = f.id
-WHERE f.company_id = $1
+WHERE f.company_id = $1 AND f.archived_at IS NULL
 `
 
 type SupplierDuesRow struct {

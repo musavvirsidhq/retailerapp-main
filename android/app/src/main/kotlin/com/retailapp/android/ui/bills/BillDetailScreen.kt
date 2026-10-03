@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -33,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.retailapp.android.data.model.BillData
@@ -41,7 +43,11 @@ import com.retailapp.android.data.remote.AttachmentEntity
 import com.retailapp.android.session.Session
 import com.retailapp.android.ui.common.AttachmentsSection
 import com.retailapp.android.ui.common.ErrorBox
+import com.retailapp.android.ui.common.DestructiveConfirmDialog
+import com.retailapp.android.ui.common.InlineError
 import com.retailapp.android.ui.common.LoadingBox
+import com.retailapp.android.ui.common.money
+import com.retailapp.android.ui.common.trimQty
 import com.retailapp.android.ui.common.successColor
 
 @Composable
@@ -59,7 +65,11 @@ fun BillDetailScreen(id: Int, isSale: Boolean, onBack: () -> Unit, onOpenPhoto: 
                 actions = {
                     if (viewModel.bill != null) {
                         IconButton(onClick = viewModel::sharePdf, enabled = !viewModel.isSharing) {
-                            Icon(Icons.Default.Share, contentDescription = "Share PDF")
+                            if (viewModel.isSharing) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Share, contentDescription = "Share PDF")
+                            }
                         }
                     }
                 },
@@ -76,6 +86,8 @@ fun BillDetailScreen(id: Int, isSale: Boolean, onBack: () -> Unit, onOpenPhoto: 
                 isSale = isSale,
                 onOpenPhoto = onOpenPhoto,
                 isCancelling = viewModel.isCancelling,
+                // Share/cancel failures used to be set but never shown, so the tap looked dead.
+                errorMessage = viewModel.errorMessage.takeUnless { showCancelDialog },
                 modifier = Modifier.padding(padding),
                 onCancelClick = { showCancelDialog = true },
             )
@@ -85,6 +97,7 @@ fun BillDetailScreen(id: Int, isSale: Boolean, onBack: () -> Unit, onOpenPhoto: 
     if (showCancelDialog) {
         CancelBillDialog(
             isSubmitting = viewModel.isCancelling,
+            errorMessage = viewModel.errorMessage,
             onDismiss = { showCancelDialog = false },
             onConfirm = { reason -> viewModel.cancel(reason) { ok -> if (ok) showCancelDialog = false } },
         )
@@ -98,6 +111,7 @@ private fun BillContent(
     isSale: Boolean,
     onOpenPhoto: (index: Int, title: String) -> Unit,
     isCancelling: Boolean,
+    errorMessage: String?,
     onCancelClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -137,15 +151,21 @@ private fun BillContent(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Total")
-                        Text("₹${bill.TotalAmount}", style = MaterialTheme.typography.titleMedium)
+                        Text(money(bill.TotalAmount), style = MaterialTheme.typography.titleMedium)
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Paid")
-                        Text("₹${bill.AmountPaid}")
+                        Text(money(bill.AmountPaid))
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Balance")
-                        Text("₹${bill.TotalAmount - bill.AmountPaid}")
+                        // Printing the raw double difference gave things like ₹1234.5600000001.
+                        val balance = bill.TotalAmount - bill.AmountPaid
+                        Text("Balance due", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            money(balance),
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (balance > 0.005) MaterialTheme.colorScheme.error else successColor(),
+                        )
                     }
                 }
             }
@@ -160,6 +180,8 @@ private fun BillContent(
                 onOpenPhoto = { index -> onOpenPhoto(index, "${bill.BillNumber} · ${bill.CounterpartyName}") },
             )
         }
+
+        item { InlineError(errorMessage) }
 
         if (bill.Status == "COMPLETED") {
             item {
@@ -183,29 +205,25 @@ private fun BillItemRow(item: BillItem) {
             Column {
                 Text(item.ProductName, style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "${item.ProductSKU} · ${item.Quantity} ${item.Unit} × ₹${item.UnitPrice}",
+                    "${item.ProductSKU} · ${trimQty(item.Quantity.toString())} ${item.Unit} × ${money(item.UnitPrice)}",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            Text("₹${item.LineTotal}", style = MaterialTheme.typography.bodyMedium)
+            Text(money(item.LineTotal), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
 
 @Composable
-private fun CancelBillDialog(isSubmitting: Boolean, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
-    var reason by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Cancel this bill?") },
-        text = {
-            OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text("Reason") }, singleLine = true)
-        },
-        confirmButton = {
-            Button(enabled = !isSubmitting && reason.isNotBlank(), onClick = { onConfirm(reason) }) {
-                if (isSubmitting) CircularProgressIndicator(modifier = Modifier.padding(2.dp)) else Text("Confirm cancel")
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Back") } },
+private fun CancelBillDialog(isSubmitting: Boolean, errorMessage: String?, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    DestructiveConfirmDialog(
+        title = "Cancel this bill?",
+        message = "The bill stays in the ledger, marked Cancelled. Stock and balances are reversed.",
+        confirmLabel = "Confirm cancel",
+        reasonLabel = "Reason",
+        isSubmitting = isSubmitting,
+        errorMessage = errorMessage,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm,
     )
 }

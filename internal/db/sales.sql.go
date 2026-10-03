@@ -142,7 +142,7 @@ const decrementProductStock = `-- name: DecrementProductStock :one
 UPDATE products
 SET current_stock = current_stock - $2
 WHERE id = $1 AND current_stock >= $2
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by
 `
 
 type DecrementProductStockParams struct {
@@ -168,6 +168,8 @@ func (q *Queries) DecrementProductStock(ctx context.Context, arg DecrementProduc
 		&i.IsBundle,
 		&i.StorefrontVisible,
 		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
@@ -348,4 +350,117 @@ func (q *Queries) ListSales(ctx context.Context, companyID int32) ([]ListSalesRo
 		return nil, err
 	}
 	return items, nil
+}
+
+const listSalesFiltered = `-- name: ListSalesFiltered :many
+SELECT s.id, s.company_id, s.bill_number, s.shop_id, sh.name AS shop_name, s.sale_date, s.total_amount,
+       s.amount_paid, s.payment_type, s.status, s.created_at
+FROM sales s
+JOIN shops sh ON sh.id = s.shop_id
+WHERE s.company_id = $1
+  AND ($2::date IS NULL OR s.sale_date >= $2::date)
+  AND ($3::date IS NULL OR s.sale_date <= $3::date)
+  AND ($4::text IS NULL OR s.bill_number ILIKE '%' || $4::text || '%' OR sh.name ILIKE '%' || $4::text || '%')
+ORDER BY s.sale_date DESC, s.id DESC
+LIMIT $6::int OFFSET $5::int
+`
+
+type ListSalesFilteredParams struct {
+	CompanyID int32
+	FromDate  pgtype.Date
+	ToDate    pgtype.Date
+	Q         pgtype.Text
+	RowOffset int32
+	RowLimit  pgtype.Int4
+}
+
+type ListSalesFilteredRow struct {
+	ID          int32
+	CompanyID   int32
+	BillNumber  string
+	ShopID      int32
+	ShopName    string
+	SaleDate    pgtype.Date
+	TotalAmount pgtype.Numeric
+	AmountPaid  pgtype.Numeric
+	PaymentType string
+	Status      string
+	CreatedAt   pgtype.Timestamptz
+}
+
+// Cycle 5 list filters: ?from=&to= (sale_date, inclusive), ?q= (bill number or customer name,
+// already escaped for ILIKE), ?limit=&offset=. Same columns as ListSales.
+func (q *Queries) ListSalesFiltered(ctx context.Context, arg ListSalesFilteredParams) ([]ListSalesFilteredRow, error) {
+	rows, err := q.db.Query(ctx, listSalesFiltered,
+		arg.CompanyID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.Q,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSalesFilteredRow
+	for rows.Next() {
+		var i ListSalesFilteredRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.BillNumber,
+			&i.ShopID,
+			&i.ShopName,
+			&i.SaleDate,
+			&i.TotalAmount,
+			&i.AmountPaid,
+			&i.PaymentType,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const salesFilteredTotals = `-- name: SalesFilteredTotals :one
+SELECT COUNT(*)::int AS total_count,
+       COALESCE(SUM(s.total_amount) FILTER (WHERE s.status = 'COMPLETED'), 0)::numeric(12,2) AS total_amount
+FROM sales s
+JOIN shops sh ON sh.id = s.shop_id
+WHERE s.company_id = $1
+  AND ($2::date IS NULL OR s.sale_date >= $2::date)
+  AND ($3::date IS NULL OR s.sale_date <= $3::date)
+  AND ($4::text IS NULL OR s.bill_number ILIKE '%' || $4::text || '%' OR sh.name ILIKE '%' || $4::text || '%')
+`
+
+type SalesFilteredTotalsParams struct {
+	CompanyID int32
+	FromDate  pgtype.Date
+	ToDate    pgtype.Date
+	Q         pgtype.Text
+}
+
+type SalesFilteredTotalsRow struct {
+	TotalCount  int32
+	TotalAmount pgtype.Numeric
+}
+
+// Count of every matching bill and the total of the completed ones, for the list summary line.
+func (q *Queries) SalesFilteredTotals(ctx context.Context, arg SalesFilteredTotalsParams) (SalesFilteredTotalsRow, error) {
+	row := q.db.QueryRow(ctx, salesFilteredTotals,
+		arg.CompanyID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.Q,
+	)
+	var i SalesFilteredTotalsRow
+	err := row.Scan(&i.TotalCount, &i.TotalAmount)
+	return i, err
 }

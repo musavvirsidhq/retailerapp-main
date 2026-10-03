@@ -445,18 +445,12 @@ fun AttachmentsSection(
 
 @Composable
 private fun DeletePhotoDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
-    var reason by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Delete, contentDescription = null) },
-        title = { Text("Delete this photo?") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Photos are proof of payment. The deletion is recorded in the audit log with your reason.")
-                OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text("Reason") }, singleLine = true)
-            }
-        },
-        confirmButton = { Button(enabled = reason.isNotBlank(), onClick = { onConfirm(reason.trim()) }) { Text("Delete") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    DestructiveConfirmDialog(
+        title = "Delete this photo?",
+        message = "Photos are proof of payment. The deletion is recorded in the audit log with your reason.",
+        confirmLabel = "Delete",
+        reasonLabel = "Reason",
+        onDismiss = onDismiss,
+        onConfirm = onConfirm,
     )
 }

@@ -45,7 +45,13 @@ func int4OrNil(v *int32) pgtype.Int4 {
 
 func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
 	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
-	products, err := h.Queries.ListProducts(r.Context(), companyID)
+	var products []db.Product
+	var err error
+	if includeArchived(r) {
+		products, err = h.Queries.ListProductsIncludingArchived(r.Context(), companyID)
+	} else {
+		products, err = h.Queries.ListProducts(r.Context(), companyID)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -106,6 +112,11 @@ func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if msg, clash := h.archivedSkuClash(r, companyID, in.SKU, 0); clash {
+		http.Error(w, msg, http.StatusConflict)
+		return
+	}
+
 	product, err := h.Queries.CreateProduct(r.Context(), db.CreateProductParams{
 		CompanyID:           companyID,
 		Name:                in.Name,
@@ -145,6 +156,11 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if msg, clash := h.archivedSkuClash(r, companyID, in.SKU, int32(id)); clash {
+		http.Error(w, msg, http.StatusConflict)
+		return
+	}
+
 	product, err := h.Queries.UpdateProduct(r.Context(), db.UpdateProductParams{
 		ID:                  int32(id),
 		CompanyID:           companyID,
@@ -166,18 +182,74 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, product)
 }
 
+// archivedSkuClash reports whether [sku] belongs to an archived product other than [selfID].
+// An archived product keeps its SKU (UNIQUE (company_id, sku)), so the user is told to restore
+// it instead (section 3.3 rule 4). Checked before writing, so it works inside a transaction too.
+func (h *ProductHandler) archivedSkuClash(r *http.Request, companyID int32, sku string, selfID int32) (string, bool) {
+	p, err := h.Queries.GetArchivedProductBySku(r.Context(), db.GetArchivedProductBySkuParams{CompanyID: companyID, Sku: sku})
+	if err != nil || p.ID == selfID {
+		return "", false
+	}
+	return "SKU already used by archived product " + p.Name + " — restore it instead.", true
+}
+
+// Delete archives the product (Cycle 5). Stock on hand is allowed - the app warns that it
+// will no longer be sellable - and is recorded in the audit entry. Company Admin only.
 func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
+	if !requireCompanyAdmin(w, r) {
+		return
+	}
+	ctx := r.Context()
+	companyID, _ := appMiddleware.CompanyIDFromContext(ctx)
+	userID, _ := appMiddleware.UserIDFromContext(ctx)
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := h.Queries.DeleteProduct(r.Context(), db.DeleteProductParams{ID: int32(id), CompanyID: companyID}); err != nil {
+	product, err := h.Queries.GetProduct(ctx, db.GetProductParams{ID: int32(id), CompanyID: companyID})
+	if err != nil {
+		http.Error(w, "product not found", http.StatusNotFound)
+		return
+	}
+	if product.ArchivedAt.Valid {
+		http.Error(w, "product is already archived", http.StatusConflict)
+		return
+	}
+	if _, err := h.Queries.ArchiveProduct(ctx, db.ArchiveProductParams{ID: product.ID, CompanyID: companyID, ArchivedBy: pgInt4Valid(userID)}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	stock := strconv.FormatFloat(numericToFloat(product.CurrentStock), 'f', -1, 64)
+	if err := writeArchiveAudit(ctx, h.Queries, "PRODUCT_ARCHIVE", "product", product.ID, map[string]string{"stock_on_hand": stock}, nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Restore un-archives a product. Company Admin only.
+func (h *ProductHandler) Restore(w http.ResponseWriter, r *http.Request) {
+	if !requireCompanyAdmin(w, r) {
+		return
+	}
+	ctx := r.Context()
+	companyID, _ := appMiddleware.CompanyIDFromContext(ctx)
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	product, err := h.Queries.RestoreProduct(ctx, db.RestoreProductParams{ID: int32(id), CompanyID: companyID})
+	if err != nil {
+		http.Error(w, "product not found or not archived", http.StatusNotFound)
+		return
+	}
+	if err := writeArchiveAudit(ctx, h.Queries, "PRODUCT_RESTORE", "product", product.ID, nil, nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, product)
 }
 
 // CurrentCost reports the cost of the oldest active cost layer for a product, so the frontend

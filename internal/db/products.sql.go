@@ -11,10 +11,47 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveProduct = `-- name: ArchiveProduct :one
+UPDATE products SET archived_at = now(), archived_by = $3
+WHERE id = $1 AND company_id = $2 AND archived_at IS NULL
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by
+`
+
+type ArchiveProductParams struct {
+	ID         int32
+	CompanyID  int32
+	ArchivedBy pgtype.Int4
+}
+
+// Cycle 5: soft delete; stock on hand is allowed (the app warns about it).
+func (q *Queries) ArchiveProduct(ctx context.Context, arg ArchiveProductParams) (Product, error) {
+	row := q.db.QueryRow(ctx, archiveProduct, arg.ID, arg.CompanyID, arg.ArchivedBy)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.Sku,
+		&i.Unit,
+		&i.CategoryID,
+		&i.SubcategoryID,
+		&i.CurrentSellingPrice,
+		&i.CurrentStock,
+		&i.CreatedAt,
+		&i.Description,
+		&i.IsBundle,
+		&i.StorefrontVisible,
+		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+	)
+	return i, err
+}
+
 const createProduct = `-- name: CreateProduct :one
 INSERT INTO products (company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by
 `
 
 type CreateProductParams struct {
@@ -53,26 +90,49 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (P
 		&i.IsBundle,
 		&i.StorefrontVisible,
 		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
 
-const deleteProduct = `-- name: DeleteProduct :exec
-DELETE FROM products WHERE id = $1 AND company_id = $2
+const getArchivedProductBySku = `-- name: GetArchivedProductBySku :one
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by FROM products WHERE company_id = $1 AND sku = $2 AND archived_at IS NOT NULL
 `
 
-type DeleteProductParams struct {
-	ID        int32
+type GetArchivedProductBySkuParams struct {
 	CompanyID int32
+	Sku       string
 }
 
-func (q *Queries) DeleteProduct(ctx context.Context, arg DeleteProductParams) error {
-	_, err := q.db.Exec(ctx, deleteProduct, arg.ID, arg.CompanyID)
-	return err
+// An archived product keeps its SKU (UNIQUE (company_id, sku)), so a clash on create/update
+// may be with one of these.
+func (q *Queries) GetArchivedProductBySku(ctx context.Context, arg GetArchivedProductBySkuParams) (Product, error) {
+	row := q.db.QueryRow(ctx, getArchivedProductBySku, arg.CompanyID, arg.Sku)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.Sku,
+		&i.Unit,
+		&i.CategoryID,
+		&i.SubcategoryID,
+		&i.CurrentSellingPrice,
+		&i.CurrentStock,
+		&i.CreatedAt,
+		&i.Description,
+		&i.IsBundle,
+		&i.StorefrontVisible,
+		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+	)
+	return i, err
 }
 
 const getProduct = `-- name: GetProduct :one
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE id = $1 AND company_id = $2
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by FROM products WHERE id = $1 AND company_id = $2
 `
 
 type GetProductParams struct {
@@ -98,12 +158,14 @@ func (q *Queries) GetProduct(ctx context.Context, arg GetProductParams) (Product
 		&i.IsBundle,
 		&i.StorefrontVisible,
 		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
 
 const getStorefrontProduct = `-- name: GetStorefrontProduct :one
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE id = $1 AND company_id = $2 AND storefront_visible = true
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by FROM products WHERE id = $1 AND company_id = $2 AND storefront_visible = true AND archived_at IS NULL
 `
 
 type GetStorefrontProductParams struct {
@@ -129,14 +191,17 @@ func (q *Queries) GetStorefrontProduct(ctx context.Context, arg GetStorefrontPro
 		&i.IsBundle,
 		&i.StorefrontVisible,
 		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
 
 const listProducts = `-- name: ListProducts :many
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE company_id = $1 ORDER BY name
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by FROM products WHERE company_id = $1 AND archived_at IS NULL ORDER BY name
 `
 
+// Active (non-archived) only: what lists, pickers and new bills may use (Cycle 5).
 func (q *Queries) ListProducts(ctx context.Context, companyID int32) ([]Product, error) {
 	rows, err := q.db.Query(ctx, listProducts, companyID)
 	if err != nil {
@@ -161,6 +226,49 @@ func (q *Queries) ListProducts(ctx context.Context, companyID int32) ([]Product,
 			&i.IsBundle,
 			&i.StorefrontVisible,
 			&i.Pinned,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProductsIncludingArchived = `-- name: ListProductsIncludingArchived :many
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by FROM products WHERE company_id = $1 ORDER BY archived_at IS NOT NULL, name
+`
+
+func (q *Queries) ListProductsIncludingArchived(ctx context.Context, companyID int32) ([]Product, error) {
+	rows, err := q.db.Query(ctx, listProductsIncludingArchived, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Product
+	for rows.Next() {
+		var i Product
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.Name,
+			&i.Sku,
+			&i.Unit,
+			&i.CategoryID,
+			&i.SubcategoryID,
+			&i.CurrentSellingPrice,
+			&i.CurrentStock,
+			&i.CreatedAt,
+			&i.Description,
+			&i.IsBundle,
+			&i.StorefrontVisible,
+			&i.Pinned,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -173,7 +281,7 @@ func (q *Queries) ListProducts(ctx context.Context, companyID int32) ([]Product,
 }
 
 const listStorefrontProducts = `-- name: ListStorefrontProducts :many
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE company_id = $1 AND storefront_visible = true ORDER BY name
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by FROM products WHERE company_id = $1 AND storefront_visible = true AND archived_at IS NULL ORDER BY name
 `
 
 func (q *Queries) ListStorefrontProducts(ctx context.Context, companyID int32) ([]Product, error) {
@@ -200,6 +308,8 @@ func (q *Queries) ListStorefrontProducts(ctx context.Context, companyID int32) (
 			&i.IsBundle,
 			&i.StorefrontVisible,
 			&i.Pinned,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -211,11 +321,46 @@ func (q *Queries) ListStorefrontProducts(ctx context.Context, companyID int32) (
 	return items, nil
 }
 
+const restoreProduct = `-- name: RestoreProduct :one
+UPDATE products SET archived_at = NULL, archived_by = NULL
+WHERE id = $1 AND company_id = $2 AND archived_at IS NOT NULL
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by
+`
+
+type RestoreProductParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) RestoreProduct(ctx context.Context, arg RestoreProductParams) (Product, error) {
+	row := q.db.QueryRow(ctx, restoreProduct, arg.ID, arg.CompanyID)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.Sku,
+		&i.Unit,
+		&i.CategoryID,
+		&i.SubcategoryID,
+		&i.CurrentSellingPrice,
+		&i.CurrentStock,
+		&i.CreatedAt,
+		&i.Description,
+		&i.IsBundle,
+		&i.StorefrontVisible,
+		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+	)
+	return i, err
+}
+
 const updateProduct = `-- name: UpdateProduct :one
 UPDATE products
 SET name = $3, sku = $4, unit = $5, category_id = $6, subcategory_id = $7, current_selling_price = $8
 WHERE id = $1 AND company_id = $2
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by
 `
 
 type UpdateProductParams struct {
@@ -256,13 +401,15 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (P
 		&i.IsBundle,
 		&i.StorefrontVisible,
 		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
 
 const updateProductSellingPrice = `-- name: UpdateProductSellingPrice :one
 UPDATE products SET current_selling_price = $3 WHERE id = $1 AND company_id = $2
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by
 `
 
 type UpdateProductSellingPriceParams struct {
@@ -289,6 +436,8 @@ func (q *Queries) UpdateProductSellingPrice(ctx context.Context, arg UpdateProdu
 		&i.IsBundle,
 		&i.StorefrontVisible,
 		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
@@ -297,7 +446,7 @@ const updateProductStorefront = `-- name: UpdateProductStorefront :one
 UPDATE products
 SET description = $3, is_bundle = $4, storefront_visible = $5
 WHERE id = $1 AND company_id = $2
-RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned
+RETURNING id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by
 `
 
 type UpdateProductStorefrontParams struct {
@@ -332,6 +481,8 @@ func (q *Queries) UpdateProductStorefront(ctx context.Context, arg UpdateProduct
 		&i.IsBundle,
 		&i.StorefrontVisible,
 		&i.Pinned,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }

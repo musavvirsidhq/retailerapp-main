@@ -42,3 +42,28 @@ UPDATE purchases
 SET status = 'CANCELLED', cancelled_reason = $3, cancelled_by = $4, cancelled_at = now()
 WHERE id = $1 AND company_id = $2 AND status = 'COMPLETED'
 RETURNING *;
+
+-- name: ListPurchasesFiltered :many
+-- Cycle 5 list filters, as ListSalesFiltered; ?q= also matches the supplier's invoice number.
+SELECT p.id, p.company_id, p.bill_number, p.factory_id, f.name AS factory_name, p.invoice_no, p.purchase_date,
+       p.total_amount, p.amount_paid, p.status, p.created_at
+FROM purchases p
+JOIN factories f ON f.id = p.factory_id
+WHERE p.company_id = sqlc.arg(company_id)
+  AND (sqlc.narg(from_date)::date IS NULL OR p.purchase_date >= sqlc.narg(from_date)::date)
+  AND (sqlc.narg(to_date)::date IS NULL OR p.purchase_date <= sqlc.narg(to_date)::date)
+  AND (sqlc.narg(q)::text IS NULL OR p.bill_number ILIKE '%' || sqlc.narg(q)::text || '%'
+       OR f.name ILIKE '%' || sqlc.narg(q)::text || '%' OR p.invoice_no ILIKE '%' || sqlc.narg(q)::text || '%')
+ORDER BY p.purchase_date DESC, p.id DESC
+LIMIT sqlc.narg(row_limit)::int OFFSET sqlc.arg(row_offset)::int;
+
+-- name: PurchasesFilteredTotals :one
+SELECT COUNT(*)::int AS total_count,
+       COALESCE(SUM(p.total_amount) FILTER (WHERE p.status = 'COMPLETED'), 0)::numeric(12,2) AS total_amount
+FROM purchases p
+JOIN factories f ON f.id = p.factory_id
+WHERE p.company_id = sqlc.arg(company_id)
+  AND (sqlc.narg(from_date)::date IS NULL OR p.purchase_date >= sqlc.narg(from_date)::date)
+  AND (sqlc.narg(to_date)::date IS NULL OR p.purchase_date <= sqlc.narg(to_date)::date)
+  AND (sqlc.narg(q)::text IS NULL OR p.bill_number ILIKE '%' || sqlc.narg(q)::text || '%'
+       OR f.name ILIKE '%' || sqlc.narg(q)::text || '%' OR p.invoice_no ILIKE '%' || sqlc.narg(q)::text || '%');

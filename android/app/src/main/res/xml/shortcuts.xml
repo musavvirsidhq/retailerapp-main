@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cycle 5 launcher shortcuts (long-press the app icon). MainActivity hands the "shortcut"
+     extra to MainScreen via session/Shortcuts.kt. targetPackage must match applicationId. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_sale"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_sale"
+        android:shortcutShortLabel="@string/shortcut_new_sale"
+        android:shortcutLongLabel="@string/shortcut_new_sale">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.retailapp.android"
+            android:targetClass="com.retailapp.android.MainActivity">
+            <extra android:name="shortcut" android:value="new_sale" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="new_purchase"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_purchase"
+        android:shortcutShortLabel="@string/shortcut_new_purchase"
+        android:shortcutLongLabel="@string/shortcut_new_purchase">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.retailapp.android"
+            android:targetClass="com.retailapp.android.MainActivity">
+            <extra android:name="shortcut" android:value="new_purchase" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="collect_money"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_collect"
+        android:shortcutShortLabel="@string/shortcut_collect_money"
+        android:shortcutLongLabel="@string/shortcut_collect_money">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.retailapp.android"
+            android:targetClass="com.retailapp.android.MainActivity">
+            <extra android:name="shortcut" android:value="collect_money" />
+        </intent>
+    </shortcut>
+</shortcuts>

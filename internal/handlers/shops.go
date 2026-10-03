@@ -30,7 +30,13 @@ type shopInput struct {
 
 func (h *ShopHandler) List(w http.ResponseWriter, r *http.Request) {
 	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
-	shops, err := h.Queries.ListShops(r.Context(), companyID)
+	var shops []db.Shop
+	var err error
+	if includeArchived(r) {
+		shops, err = h.Queries.ListShopsIncludingArchived(r.Context(), companyID)
+	} else {
+		shops, err = h.Queries.ListShops(r.Context(), companyID)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -123,16 +129,69 @@ func (h *ShopHandler) Update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, shop)
 }
 
+// Delete archives the customer (Cycle 5): hidden from lists, pickers and dues, but kept for
+// old bills, payments and ledgers. Company Admin only, and only once nothing is owed either way.
 func (h *ShopHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
+	if !requireCompanyAdmin(w, r) {
+		return
+	}
+	ctx := r.Context()
+	companyID, _ := appMiddleware.CompanyIDFromContext(ctx)
+	userID, _ := appMiddleware.UserIDFromContext(ctx)
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := h.Queries.DeleteShop(r.Context(), db.DeleteShopParams{ID: int32(id), CompanyID: companyID}); err != nil {
+	shop, err := h.Queries.GetShop(ctx, db.GetShopParams{ID: int32(id), CompanyID: companyID})
+	if err != nil {
+		http.Error(w, "customer not found", http.StatusNotFound)
+		return
+	}
+	if shop.ArchivedAt.Valid {
+		http.Error(w, "customer is already archived", http.StatusConflict)
+		return
+	}
+	balance, err := h.Queries.ShopBalance(ctx, db.ShopBalanceParams{ID: shop.ID, CompanyID: companyID})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if p := toPaise(balance); p != 0 {
+		http.Error(w, settleBeforeArchive(p), http.StatusBadRequest)
+		return
+	}
+	if _, err := h.Queries.ArchiveShop(ctx, db.ArchiveShopParams{ID: shop.ID, CompanyID: companyID, ArchivedBy: pgInt4Valid(userID)}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := writeArchiveAudit(ctx, h.Queries, "SHOP_ARCHIVE", "shop", shop.ID, nil, map[string]string{"balance": formatPaise(0)}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Restore un-archives a customer. Company Admin only.
+func (h *ShopHandler) Restore(w http.ResponseWriter, r *http.Request) {
+	if !requireCompanyAdmin(w, r) {
+		return
+	}
+	ctx := r.Context()
+	companyID, _ := appMiddleware.CompanyIDFromContext(ctx)
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	shop, err := h.Queries.RestoreShop(ctx, db.RestoreShopParams{ID: int32(id), CompanyID: companyID})
+	if err != nil {
+		http.Error(w, "customer not found or not archived", http.StatusNotFound)
+		return
+	}
+	if err := writeArchiveAudit(ctx, h.Queries, "SHOP_RESTORE", "shop", shop.ID, nil, nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, shop)
 }

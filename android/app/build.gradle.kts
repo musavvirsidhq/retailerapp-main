@@ -2,7 +2,6 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -13,9 +12,23 @@ val keystoreProperties = Properties().apply {
     if (propsFile.exists()) propsFile.inputStream().use { load(it) }
 }
 
+val debugBaseUrl = (findProperty("retailapp.debugBaseUrl") as String?)?.takeIf { it.isNotBlank() } ?: "http://13.215.157.19/"
+val releaseBaseUrl = (findProperty("retailapp.releaseBaseUrl") as String?).orEmpty().trim()
+
+// A release APK must never talk plain HTTP (Cycle 5 section 2.4), so refuse to build one
+// until an https:// backend URL is configured.
+tasks.matching { it.name.startsWith("pre") && it.name.endsWith("ReleaseBuild") }.configureEach {
+    doFirst {
+        require(releaseBaseUrl.startsWith("https://") && releaseBaseUrl.endsWith("/")) {
+            "Set retailapp.releaseBaseUrl to the HTTPS API address (e.g. https://api.example.com/) " +
+                "in android/gradle.properties or with -Pretailapp.releaseBaseUrl=... before building a release."
+        }
+    }
+}
+
 android {
     namespace = "com.retailapp.android"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.retailapp.android"
@@ -36,8 +49,15 @@ android {
         }
     }
 
+    // Cycle 5: the backend URL lives here instead of NetworkModule, so debug builds can keep
+    // talking to the plain-HTTP test server (src/debug/res/xml allows it) while release builds
+    // are HTTPS-only. Set retailapp.releaseBaseUrl (gradle.properties or -P) to the API domain.
     buildTypes {
+        debug {
+            buildConfigField("String", "API_BASE_URL", "\"$debugBaseUrl\"")
+        }
         release {
+            buildConfigField("String", "API_BASE_URL", "\"$releaseBaseUrl\"")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -52,38 +72,30 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
-    }
-
-    // Kotlin sources live under src/main/kotlin instead of the default src/main/java.
-    sourceSets {
-        getByName("main").kotlin.srcDirs("src/main/kotlin")
+        buildConfig = true
     }
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
-    implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
 
-    implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    androidTestImplementation(platform("androidx.compose:compose-bom:2026.09.00"))
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
-    implementation("androidx.navigation:navigation-compose:2.8.5")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
 
     // Networking. The backend uses cookie-based sessions, so OkHttp keeps a persistent
     // cookie jar (see session/PersistentCookieJar.kt) instead of a bearer-token scheme.
@@ -96,5 +108,9 @@ dependencies {
     // Cycle 4 proof photos: Coil loads them through our OkHttp client (so the session cookie is
     // sent), ExifInterface keeps camera photos upright when we re-encode them before upload.
     implementation("io.coil-kt:coil-compose:2.7.0")
-    implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation("androidx.exifinterface:exifinterface:1.4.2")
+
+    // Cycle 5 barcode/SKU scanning. The Google code scanner runs inside Play services, so the
+    // app itself needs no camera permission.
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }

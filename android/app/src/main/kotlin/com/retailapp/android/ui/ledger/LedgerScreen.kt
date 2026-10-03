@@ -27,11 +27,20 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +52,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,32 +73,57 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.retailapp.android.data.model.LedgerEntry
 import com.retailapp.android.data.model.LedgerResponse
 import com.retailapp.android.data.remote.AttachmentEntity
+import android.widget.Toast
+import com.retailapp.android.RetailApp
 import com.retailapp.android.data.remote.NetworkModule
+import com.retailapp.android.session.RemindedStore
+import com.retailapp.android.session.Session
+import com.retailapp.android.ui.common.ArchivedTag
+import com.retailapp.android.ui.common.DataChanges
+import com.retailapp.android.ui.common.DestructiveConfirmDialog
 import com.retailapp.android.ui.common.ErrorBox
+import com.retailapp.android.ui.common.InfoDialog
+import com.retailapp.android.ui.common.Messages
+import com.retailapp.android.ui.common.OverflowMenu
+import com.retailapp.android.ui.common.hasPhone
+import com.retailapp.android.ui.common.shortDate
 import com.retailapp.android.ui.common.LoadingBox
 import com.retailapp.android.ui.common.displayDate
 import com.retailapp.android.ui.common.isoDate
 import com.retailapp.android.ui.common.money
 import com.retailapp.android.ui.common.successColor
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 enum class LedgerRange(val label: String) {
     ALL("All time"),
     MONTH("This month"),
     THREE_MONTHS("Last 3 months"),
     YEAR("This year"),
+
+    /** Cycle 5: any from/to picked in a DateRangePicker; the dates live in LedgerViewModel. */
+    CUSTOM("Custom…"),
     ;
 
     fun fromDate(): String? {
         val cal = Calendar.getInstance()
         return when (this) {
-            ALL -> null
+            ALL, CUSTOM -> null
             MONTH -> isoDate(cal.apply { set(Calendar.DAY_OF_MONTH, 1) })
             THREE_MONTHS -> isoDate(cal.apply { add(Calendar.MONTH, -3) })
             YEAR -> isoDate(cal.apply { set(Calendar.DAY_OF_YEAR, 1) })
         }
     }
+}
+
+/** A custom ledger range, as YYYY-MM-DD dates (both inclusive). */
+data class CustomRange(val from: String, val to: String) {
+    /** "1 Sep – 15 Sep" for the chip. */
+    val label: String get() = if (from == to) shortDate(from) else "${shortDate(from)} – ${shortDate(to)}"
 }
 
 enum class LedgerTypeFilter(val api: String?) { ALL(null), BILLS("bill"), PAYMENTS("payment") }
@@ -111,6 +146,18 @@ class LedgerViewModel(private val kind: PartyKind, private val partyId: Int) : V
         private set
     var withPhotos by mutableStateOf(false)
         private set
+    var customRange by mutableStateOf<CustomRange?>(null)
+        private set
+    var isArchiving by mutableStateOf(false)
+        private set
+    var actionError by mutableStateOf<String?>(null)
+        private set
+
+    /** Label of the selected range, e.g. "This month" or "1 Sep – 15 Sep". */
+    val rangeLabel: String get() = if (range == LedgerRange.CUSTOM) customRange?.label ?: range.label else range.label
+
+    private fun fromDate(): String? = if (range == LedgerRange.CUSTOM) customRange?.from else range.fromDate()
+    private fun toDate(): String? = if (range == LedgerRange.CUSTOM) customRange?.to else null
 
     fun load() {
         viewModelScope.launch {
@@ -119,9 +166,9 @@ class LedgerViewModel(private val kind: PartyKind, private val partyId: Int) : V
             NetworkModule.safeCall {
                 val api = NetworkModule.ledgerApi
                 if (kind == PartyKind.CUSTOMER) {
-                    api.customerLedger(partyId, range.fromDate(), type.api, withPhotos)
+                    api.customerLedger(partyId, fromDate(), toDate(), type.api, withPhotos)
                 } else {
-                    api.supplierLedger(partyId, range.fromDate(), type.api, withPhotos)
+                    api.supplierLedger(partyId, fromDate(), toDate(), type.api, withPhotos)
                 }
             }
                 .onSuccess { data = it }
@@ -131,8 +178,51 @@ class LedgerViewModel(private val kind: PartyKind, private val partyId: Int) : V
     }
 
     fun updateRange(value: LedgerRange) { range = value; load() }
+    fun updateCustomRange(value: CustomRange) {
+        customRange = value
+        range = LedgerRange.CUSTOM
+        load()
+    }
     fun updateType(value: LedgerTypeFilter) { type = value; load() }
     fun toggleWithPhotos() { withPhotos = !withPhotos; load() }
+
+    fun clearActionError() {
+        actionError = null
+    }
+
+    /** Archive (Company Admin only). The screen has already checked the balance is zero. */
+    fun archive(onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            isArchiving = true
+            actionError = null
+            NetworkModule.safeCall {
+                if (kind == PartyKind.CUSTOMER) NetworkModule.shopApi.archiveShop(partyId) else NetworkModule.factoryApi.archiveFactory(partyId)
+            }
+                .onSuccess {
+                    DataChanges.bump()
+                    onDone(true)
+                }
+                .onFailure {
+                    actionError = it.message
+                    onDone(false)
+                }
+            isArchiving = false
+        }
+    }
+
+    fun restore() {
+        viewModelScope.launch {
+            NetworkModule.safeCall {
+                if (kind == PartyKind.CUSTOMER) NetworkModule.shopApi.restoreShop(partyId) else NetworkModule.factoryApi.restoreFactory(partyId)
+            }
+                .onSuccess {
+                    DataChanges.bump()
+                    Toast.makeText(RetailApp.instance, "Restored", Toast.LENGTH_SHORT).show()
+                    load()
+                }
+                .onFailure { Toast.makeText(RetailApp.instance, "Couldn't restore: ${it.message}", Toast.LENGTH_LONG).show() }
+        }
+    }
 }
 
 /**
@@ -149,18 +239,24 @@ fun LedgerScreen(
     onOpenPhotos: (entity: AttachmentEntity, id: Int, title: String) -> Unit,
     onPay: (partyId: Int) -> Unit,
     onNewBill: (partyId: Int) -> Unit,
+    onEdit: (partyId: Int) -> Unit,
 ) {
     val viewModel: LedgerViewModel = viewModel(key = "ledger-${kind.name}-$partyId", factory = LedgerViewModel.Factory(kind, partyId))
     val context = LocalContext.current
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.load() }
+    var archiveStep by remember { mutableStateOf<ArchiveStep?>(null) }
 
     val data = viewModel.data
+    val archived = data?.party?.archived_at != null
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text(data?.party?.name ?: kind.singular, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(data?.party?.name ?: kind.singular, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                            if (archived) ArchivedTag()
+                        }
                         data?.party?.contact_name?.takeIf { it.isNotBlank() }?.let {
                             Text(it, style = MaterialTheme.typography.bodySmall)
                         }
@@ -170,20 +266,50 @@ fun LedgerScreen(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
                 actions = {
-                    if (data != null) {
+                    // Without a number these opened an empty dialer / an invalid wa.me link.
+                    if (data != null && hasPhone(data.party.phone)) {
                         IconButton(onClick = { dialPhone(context, data.party.phone) }) {
                             Icon(Icons.Default.Call, contentDescription = "Call")
                         }
                         IconButton(onClick = {
                             val pending = data.summary.pending.toDoubleOrNull() ?: 0.0
-                            val message = if (kind == PartyKind.CUSTOMER && pending > 0) {
-                                "Hello ${data.party.name}, your pending balance with us is ${money(pending)}. Kindly arrange the payment. Thank you."
-                            } else {
-                                "Hello ${data.party.name}, "
-                            }
+                            val isReminder = kind == PartyKind.CUSTOMER && pending > 0
+                            val message = if (isReminder) Messages.paymentReminder(data.party.name, pending) else Messages.greeting(data.party.name)
+                            if (isReminder) RemindedStore.markReminded(partyId)
                             openWhatsApp(context, data.party.phone, message)
                         }) {
                             Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "WhatsApp")
+                        }
+                    }
+                    if (data != null) {
+                        OverflowMenu { close ->
+                            DropdownMenuItem(
+                                text = { Text("Edit ${kind.singular.lowercase()}") },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                onClick = { close(); onEdit(partyId) },
+                            )
+                            // Archive/restore is Company Admin only (Cycle 5 section 3.2 rule 4).
+                            if (Session.isCompanyAdmin) {
+                                if (archived) {
+                                    DropdownMenuItem(
+                                        text = { Text("Restore") },
+                                        leadingIcon = { Icon(Icons.Default.Unarchive, contentDescription = null) },
+                                        onClick = { close(); viewModel.restore() },
+                                    )
+                                } else {
+                                    DropdownMenuItem(
+                                        text = { Text("Archive", color = MaterialTheme.colorScheme.error) },
+                                        leadingIcon = { Icon(Icons.Default.Archive, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                        onClick = {
+                                            close()
+                                            viewModel.clearActionError()
+                                            val pending = data.summary.pending.toDoubleOrNull() ?: 0.0
+                                            // A non-zero balance would hide money still owed (rule 3.3.1).
+                                            archiveStep = if (kotlin.math.abs(pending) >= 0.005) ArchiveStep.Blocked(pending) else ArchiveStep.Confirm
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
                 },
@@ -215,7 +341,7 @@ fun LedgerScreen(
                 if (viewModel.range != LedgerRange.ALL) {
                     item {
                         Text(
-                            "${viewModel.range.label}: ${kind.billLabel.lowercase()}s ${money(data.range_summary.billed)} · " +
+                            "${viewModel.rangeLabel}: ${kind.billLabel.lowercase()}s ${money(data.range_summary.billed)} · " +
                                 "${if (kind == PartyKind.CUSTOMER) "collected" else "paid"} ${money(data.range_summary.collected)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -249,6 +375,38 @@ fun LedgerScreen(
             }
         }
     }
+
+    when (val step = archiveStep) {
+        null -> Unit
+        is ArchiveStep.Blocked -> InfoDialog(
+            title = "Can't archive yet",
+            message = Messages.settleBeforeArchive(step.balance),
+            onDismiss = { archiveStep = null },
+        )
+        ArchiveStep.Confirm -> DestructiveConfirmDialog(
+            title = "Archive ${data?.party?.name ?: kind.singular}?",
+            message = "They'll be hidden from lists, pickers and dues. Their bills and payments stay in your records, " +
+                "and you can restore them from ${kind.plural} → Show archived.",
+            confirmLabel = "Archive",
+            isSubmitting = viewModel.isArchiving,
+            errorMessage = viewModel.actionError,
+            onDismiss = { archiveStep = null },
+            onConfirm = {
+                viewModel.archive { ok ->
+                    if (ok) {
+                        archiveStep = null
+                        Toast.makeText(context, "${data?.party?.name ?: kind.singular} archived", Toast.LENGTH_SHORT).show()
+                        onBack()
+                    }
+                }
+            },
+        )
+    }
+}
+
+private sealed interface ArchiveStep {
+    data class Blocked(val balance: Double) : ArchiveStep
+    data object Confirm : ArchiveStep
 }
 
 @Composable
@@ -286,10 +444,29 @@ private fun SummaryLine(label: String, value: String) {
 @Composable
 private fun Filters(viewModel: LedgerViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        var pickingRange by remember { mutableStateOf(false) }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(LedgerRange.entries) { range ->
-                FilterChip(selected = viewModel.range == range, onClick = { viewModel.updateRange(range) }, label = { Text(range.label) })
+                if (range == LedgerRange.CUSTOM) {
+                    FilterChip(
+                        selected = viewModel.range == range,
+                        onClick = { pickingRange = true },
+                        leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        label = { Text(viewModel.customRange?.label ?: range.label) },
+                    )
+                } else {
+                    FilterChip(selected = viewModel.range == range, onClick = { viewModel.updateRange(range) }, label = { Text(range.label) })
+                }
             }
+        }
+        if (pickingRange) {
+            DateRangeDialog(
+                onDismiss = { pickingRange = false },
+                onPicked = {
+                    pickingRange = false
+                    viewModel.updateCustomRange(it)
+                },
+            )
         }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             item { FilterChip(selected = viewModel.type == LedgerTypeFilter.ALL, onClick = { viewModel.updateType(LedgerTypeFilter.ALL) }, label = { Text("All") }) }
@@ -377,5 +554,29 @@ private fun EntryRow(kind: PartyKind, entry: LedgerEntry, onClick: () -> Unit, o
                 )
             }
         }
+    }
+}
+
+/** M3 DateRangePicker in a dialog; a single tapped day counts as a one-day range. */
+@Composable
+private fun DateRangeDialog(onDismiss: () -> Unit, onPicked: (CustomRange) -> Unit) {
+    val state = rememberDateRangePickerState()
+    // The picker works in UTC-midnight millis.
+    val utc = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") } }
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = state.selectedStartDateMillis != null,
+                onClick = {
+                    val start = state.selectedStartDateMillis ?: return@TextButton
+                    val end = state.selectedEndDateMillis ?: start
+                    onPicked(CustomRange(utc.format(Date(start)), utc.format(Date(end))))
+                },
+            ) { Text("Apply") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    ) {
+        DateRangePicker(state = state, modifier = Modifier.weight(1f))
     }
 }

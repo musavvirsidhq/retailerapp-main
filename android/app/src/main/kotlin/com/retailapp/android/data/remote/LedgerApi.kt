@@ -32,6 +32,7 @@ interface LedgerApi {
     suspend fun customerLedger(
         @Path("id") id: Int,
         @Query("from") from: String?,
+        @Query("to") to: String?,
         @Query("type") type: String?,
         @Query("with_photos") withPhotos: Boolean,
     ): Response<LedgerResponse>
@@ -40,6 +41,7 @@ interface LedgerApi {
     suspend fun supplierLedger(
         @Path("id") id: Int,
         @Query("from") from: String?,
+        @Query("to") to: String?,
         @Query("type") type: String?,
         @Query("with_photos") withPhotos: Boolean,
     ): Response<LedgerResponse>

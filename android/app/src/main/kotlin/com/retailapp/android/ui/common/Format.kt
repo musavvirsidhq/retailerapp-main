@@ -56,3 +56,19 @@ fun displayDateTime(value: String?): String {
 
 /** YYYY-MM-DD for [daysAgo]-style ledger range filters, or the start of this month/year. */
 fun isoDate(calendar: Calendar): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(calendar.time)
+
+/** "28 Sep" from a YYYY-MM-DD date string (or a timestamp), for short WhatsApp messages. */
+fun shortDate(value: String?): String {
+    if (value.isNullOrBlank()) return ""
+    val date = parseTimestamp(value)
+        ?: try {
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value.take(10))
+        } catch (e: Exception) {
+            null
+        }
+        ?: return value
+    return SimpleDateFormat("d MMM", Locale.getDefault()).format(date)
+}
+
+/** Today as YYYY-MM-DD in the phone's time zone. */
+fun todayIso(): String = isoDate(Calendar.getInstance())

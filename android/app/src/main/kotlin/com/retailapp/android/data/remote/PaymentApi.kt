@@ -9,10 +9,18 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 interface PaymentApi {
+    /** Cycle 5 filters and paging; [partyType] is "shop" or "factory". */
     @GET("api/payments/")
-    suspend fun listPayments(): Response<List<Payment>>
+    suspend fun listPayments(
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+        @Query("party_type") partyType: String? = null,
+        @Query("limit") limit: Int? = null,
+        @Query("offset") offset: Int? = null,
+    ): Response<List<Payment>>
 
     @POST("api/payments/")
     suspend fun createPayment(@Body body: PaymentInput): Response<Payment>

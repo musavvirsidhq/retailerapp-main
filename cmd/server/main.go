@@ -54,11 +54,16 @@ func main() {
 	}
 	log.Println("connected to database successfully")
 
+	// Cycle 5: once the site is served over HTTPS, set COOKIE_SECURE=true so the session cookie
+	// is never sent over plain HTTP. Leave it unset for local development over http://.
+	cookieSecure := os.Getenv("COOKIE_SECURE") == "true"
+
 	store := sessions.NewCookieStore([]byte(sessionKey))
 	store.Options = &sessions.Options{
 		Path:     "/",
 		MaxAge:   86400 * 7, // 7 days
 		HttpOnly: true,
+		Secure:   cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	}
 
@@ -166,7 +171,9 @@ func main() {
 				r.With(appMiddleware.RequireCompanyAdmin()).Delete("/{id}/pin", quickItemsHandler.Unpin)
 				r.Get("/{id}", productHandler.Get)
 				r.Put("/{id}", productHandler.Update)
-				r.Delete("/{id}", productHandler.Delete)
+				// Cycle 5: DELETE archives (soft delete); archive/restore are Company Admin only.
+				r.With(appMiddleware.RequireCompanyAdmin()).Delete("/{id}", productHandler.Delete)
+				r.With(appMiddleware.RequireCompanyAdmin()).Post("/{id}/restore", productHandler.Restore)
 
 				r.Get("/{id}/storefront", productStorefrontHandler.Details)
 				r.Put("/{id}/storefront", productStorefrontHandler.UpdateDetails)
@@ -182,7 +189,8 @@ func main() {
 				r.Post("/", factoryHandler.Create)
 				r.Get("/{id}", factoryHandler.Get)
 				r.Put("/{id}", factoryHandler.Update)
-				r.Delete("/{id}", factoryHandler.Delete)
+				r.With(appMiddleware.RequireCompanyAdmin()).Delete("/{id}", factoryHandler.Delete)
+				r.With(appMiddleware.RequireCompanyAdmin()).Post("/{id}/restore", factoryHandler.Restore)
 				r.With(appMiddleware.RequirePurchaseAccess()).Get("/{id}/ledger", ledgerHandler.SupplierLedger)
 			})
 
@@ -191,7 +199,8 @@ func main() {
 				r.Post("/", shopHandler.Create)
 				r.Get("/{id}", shopHandler.Get)
 				r.Put("/{id}", shopHandler.Update)
-				r.Delete("/{id}", shopHandler.Delete)
+				r.With(appMiddleware.RequireCompanyAdmin()).Delete("/{id}", shopHandler.Delete)
+				r.With(appMiddleware.RequireCompanyAdmin()).Post("/{id}/restore", shopHandler.Restore)
 				r.With(appMiddleware.RequireSalesAccess()).Get("/{id}/ledger", ledgerHandler.CustomerLedger)
 			})
 
@@ -240,6 +249,13 @@ func main() {
 			// Cycle 4 customer/supplier dues and ledgers (Android).
 			r.With(appMiddleware.RequireSalesAccess()).Get("/api/reports/customer-dues", ledgerHandler.CustomerDues)
 			r.With(appMiddleware.RequirePurchaseAccess()).Get("/api/reports/supplier-dues", ledgerHandler.SupplierDues)
+
+			// Cycle 5 company settings: every company user reads them (the payment form needs
+			// "require photo"), only the Company Admin changes them.
+			r.Route("/api/company/settings", func(r chi.Router) {
+				r.Get("/", companyHandler.GetSettings)
+				r.With(appMiddleware.RequireCompanyAdmin()).Put("/", companyHandler.UpdateSettings)
+			})
 
 			// Company Admin: staff management
 			r.Group(func(r chi.Router) {

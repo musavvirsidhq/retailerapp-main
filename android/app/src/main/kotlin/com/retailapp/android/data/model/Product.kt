@@ -1,5 +1,7 @@
 package com.retailapp.android.data.model
 
+import com.google.gson.annotations.SerializedName
+
 data class Product(
     val ID: Int,
     val CompanyID: Int,
@@ -12,8 +14,14 @@ data class Product(
     val CurrentStock: String,
     val CreatedAt: String,
     val Pinned: Boolean = false,
-)
+    // Cycle 5 archive; see Shop.archivedAt.
+    @SerializedName(value = "archived_at", alternate = ["ArchivedAt"])
+    val archivedAt: String? = null,
+) {
+    val isArchived: Boolean get() = archivedAt != null
+}
 
+/** Used for both create (POST) and edit (PUT). Stock is never sent: it only moves through bills. */
 data class ProductInput(
     val name: String,
     val sku: String,

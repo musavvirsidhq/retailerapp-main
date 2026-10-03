@@ -13,14 +13,25 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface ProductApi {
+    /** Archived products are left out unless [includeArchived] is true (Cycle 5). */
     @GET("api/products/")
-    suspend fun listProducts(): Response<List<Product>>
+    suspend fun listProducts(@Query("include_archived") includeArchived: Boolean? = null): Response<List<Product>>
+
+    @GET("api/products/{id}")
+    suspend fun getProduct(@Path("id") id: Int): Response<Product>
+
+    @PUT("api/products/{id}")
+    suspend fun updateProduct(@Path("id") id: Int, @Body body: ProductInput): Response<Product>
 
     @POST("api/products/")
     suspend fun createProduct(@Body body: ProductInput): Response<Product>
 
+    /** Archives (soft-deletes) the product since Cycle 5. Company Admin only. */
     @DELETE("api/products/{id}")
-    suspend fun deleteProduct(@Path("id") id: Int): Response<Unit>
+    suspend fun archiveProduct(@Path("id") id: Int): Response<Unit>
+
+    @POST("api/products/{id}/restore")
+    suspend fun restoreProduct(@Path("id") id: Int): Response<Unit>
 
     /** Pinned items first, then the most-used items. [shopId] switches to "usually buys". */
     @GET("api/products/frequent")

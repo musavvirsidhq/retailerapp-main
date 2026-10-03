@@ -11,10 +11,41 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveFactory = `-- name: ArchiveFactory :one
+UPDATE factories SET archived_at = now(), archived_by = $3
+WHERE id = $1 AND company_id = $2 AND archived_at IS NULL
+RETURNING id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at, archived_at, archived_by
+`
+
+type ArchiveFactoryParams struct {
+	ID         int32
+	CompanyID  int32
+	ArchivedBy pgtype.Int4
+}
+
+// Cycle 5: soft delete. Old bills, payments and ledgers keep pointing at the row.
+func (q *Queries) ArchiveFactory(ctx context.Context, arg ArchiveFactoryParams) (Factory, error) {
+	row := q.db.QueryRow(ctx, archiveFactory, arg.ID, arg.CompanyID, arg.ArchivedBy)
+	var i Factory
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.ContactPerson,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
+		&i.Address,
+		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+	)
+	return i, err
+}
+
 const createFactory = `-- name: CreateFactory :one
 INSERT INTO factories (company_id, name, contact_person, primary_phone, secondary_phone, address)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at
+RETURNING id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at, archived_at, archived_by
 `
 
 type CreateFactoryParams struct {
@@ -45,26 +76,14 @@ func (q *Queries) CreateFactory(ctx context.Context, arg CreateFactoryParams) (F
 		&i.SecondaryPhone,
 		&i.Address,
 		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
 
-const deleteFactory = `-- name: DeleteFactory :exec
-DELETE FROM factories WHERE id = $1 AND company_id = $2
-`
-
-type DeleteFactoryParams struct {
-	ID        int32
-	CompanyID int32
-}
-
-func (q *Queries) DeleteFactory(ctx context.Context, arg DeleteFactoryParams) error {
-	_, err := q.db.Exec(ctx, deleteFactory, arg.ID, arg.CompanyID)
-	return err
-}
-
 const getFactory = `-- name: GetFactory :one
-SELECT id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at FROM factories WHERE id = $1 AND company_id = $2
+SELECT id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at, archived_at, archived_by FROM factories WHERE id = $1 AND company_id = $2
 `
 
 type GetFactoryParams struct {
@@ -84,14 +103,17 @@ func (q *Queries) GetFactory(ctx context.Context, arg GetFactoryParams) (Factory
 		&i.SecondaryPhone,
 		&i.Address,
 		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }
 
 const listFactories = `-- name: ListFactories :many
-SELECT id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at FROM factories WHERE company_id = $1 ORDER BY name
+SELECT id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at, archived_at, archived_by FROM factories WHERE company_id = $1 AND archived_at IS NULL ORDER BY name
 `
 
+// Active (non-archived) only: what lists, pickers and new bills may use (Cycle 5).
 func (q *Queries) ListFactories(ctx context.Context, companyID int32) ([]Factory, error) {
 	rows, err := q.db.Query(ctx, listFactories, companyID)
 	if err != nil {
@@ -110,6 +132,8 @@ func (q *Queries) ListFactories(ctx context.Context, companyID int32) ([]Factory
 			&i.SecondaryPhone,
 			&i.Address,
 			&i.CreatedAt,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -121,11 +145,75 @@ func (q *Queries) ListFactories(ctx context.Context, companyID int32) ([]Factory
 	return items, nil
 }
 
+const listFactoriesIncludingArchived = `-- name: ListFactoriesIncludingArchived :many
+SELECT id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at, archived_at, archived_by FROM factories WHERE company_id = $1 ORDER BY archived_at IS NOT NULL, name
+`
+
+func (q *Queries) ListFactoriesIncludingArchived(ctx context.Context, companyID int32) ([]Factory, error) {
+	rows, err := q.db.Query(ctx, listFactoriesIncludingArchived, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Factory
+	for rows.Next() {
+		var i Factory
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.Name,
+			&i.ContactPerson,
+			&i.PrimaryPhone,
+			&i.SecondaryPhone,
+			&i.Address,
+			&i.CreatedAt,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const restoreFactory = `-- name: RestoreFactory :one
+UPDATE factories SET archived_at = NULL, archived_by = NULL
+WHERE id = $1 AND company_id = $2 AND archived_at IS NOT NULL
+RETURNING id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at, archived_at, archived_by
+`
+
+type RestoreFactoryParams struct {
+	ID        int32
+	CompanyID int32
+}
+
+func (q *Queries) RestoreFactory(ctx context.Context, arg RestoreFactoryParams) (Factory, error) {
+	row := q.db.QueryRow(ctx, restoreFactory, arg.ID, arg.CompanyID)
+	var i Factory
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.ContactPerson,
+		&i.PrimaryPhone,
+		&i.SecondaryPhone,
+		&i.Address,
+		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+	)
+	return i, err
+}
+
 const updateFactory = `-- name: UpdateFactory :one
 UPDATE factories
 SET name = $3, contact_person = $4, primary_phone = $5, secondary_phone = $6, address = $7
 WHERE id = $1 AND company_id = $2
-RETURNING id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at
+RETURNING id, company_id, name, contact_person, primary_phone, secondary_phone, address, created_at, archived_at, archived_by
 `
 
 type UpdateFactoryParams struct {
@@ -158,6 +246,8 @@ func (q *Queries) UpdateFactory(ctx context.Context, arg UpdateFactoryParams) (F
 		&i.SecondaryPhone,
 		&i.Address,
 		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
 	)
 	return i, err
 }

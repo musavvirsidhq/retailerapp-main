@@ -29,7 +29,7 @@ LEFT JOIN (
   SELECT party_id, SUM(amount) AS paid
   FROM payments WHERE payments.company_id = $1 AND party_type = 'factory' GROUP BY party_id
 ) pay_agg ON pay_agg.party_id = f.id
-WHERE f.company_id = $1
+WHERE f.company_id = $1 AND f.archived_at IS NULL
 ORDER BY balance DESC
 `
 
@@ -60,7 +60,7 @@ func (q *Queries) FactoryPayables(ctx context.Context, companyID int32) ([]Facto
 }
 
 const lowStockProducts = `-- name: LowStockProducts :many
-SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned FROM products WHERE company_id = $1 AND current_stock < 10 ORDER BY current_stock ASC
+SELECT id, company_id, name, sku, unit, category_id, subcategory_id, current_selling_price, current_stock, created_at, description, is_bundle, storefront_visible, pinned, archived_at, archived_by FROM products WHERE company_id = $1 AND current_stock < 10 AND archived_at IS NULL ORDER BY current_stock ASC
 `
 
 func (q *Queries) LowStockProducts(ctx context.Context, companyID int32) ([]Product, error) {
@@ -87,6 +87,8 @@ func (q *Queries) LowStockProducts(ctx context.Context, companyID int32) ([]Prod
 			&i.IsBundle,
 			&i.StorefrontVisible,
 			&i.Pinned,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -139,7 +141,7 @@ LEFT JOIN (
   SELECT party_id, SUM(amount) AS paid
   FROM payments WHERE payments.company_id = $1 AND party_type = 'shop' GROUP BY party_id
 ) pay_agg ON pay_agg.party_id = s.id
-WHERE s.company_id = $1
+WHERE s.company_id = $1 AND s.archived_at IS NULL
 ORDER BY balance DESC
 `
 

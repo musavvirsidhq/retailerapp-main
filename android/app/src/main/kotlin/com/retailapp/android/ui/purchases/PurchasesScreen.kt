@@ -3,6 +3,7 @@
 package com.retailapp.android.ui.purchases
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,12 +34,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -51,77 +55,80 @@ import com.retailapp.android.data.model.PurchaseInput
 import com.retailapp.android.data.model.PurchaseItemInput
 import com.retailapp.android.session.Session
 import com.retailapp.android.ui.common.BillLine
-import com.retailapp.android.ui.common.DropdownField
+import com.retailapp.android.ui.common.DiscardDialog
 import com.retailapp.android.ui.common.ErrorBox
 import com.retailapp.android.ui.common.InlineError
 import com.retailapp.android.ui.common.LoadingBox
+import com.retailapp.android.ui.common.PagedListContent
 import com.retailapp.android.ui.common.PhotoPickerRow
+import com.retailapp.android.ui.common.ScanButton
+import com.retailapp.android.ui.common.countLabel
+import com.retailapp.android.ui.common.displayDate
+import com.retailapp.android.ui.common.rememberBillScanner
 import com.retailapp.android.ui.common.QuickItemsStrip
+import com.retailapp.android.ui.common.SearchablePickerField
 import com.retailapp.android.ui.common.Terms
 import com.retailapp.android.ui.common.money
+import com.retailapp.android.ui.common.productDetail
 import com.retailapp.android.ui.common.successColor
 import com.retailapp.android.ui.common.withQuickItem
 
 /**
- * Purchases list plus the new-purchase form. [startNew] opens the form directly (dashboard
- * "+ Purchase", a supplier ledger's "New purchase") with [presetFactoryId] preselected.
+ * The purchases list, or - when [startNew] - the new-purchase form, each as its own navigation
+ * entry so the bottom bar can hide on the form. [presetFactoryId] preselects a supplier.
  */
 @Composable
 fun PurchasesScreen(
     onOpenBill: (Int) -> Unit,
+    onNewPurchase: () -> Unit = {},
     startNew: Boolean = false,
     presetFactoryId: Int? = null,
     onClose: () -> Unit = {},
+    onSavedOpenBill: (Int) -> Unit = onOpenBill,
+    onAddProductFromScan: ((String) -> Unit)? = null,
     viewModel: PurchasesViewModel = viewModel(),
 ) {
-    var showNewPurchase by rememberSaveable { mutableStateOf(startNew && Session.canPurchase) }
-
-    if (showNewPurchase) {
-        if (viewModel.isLoading) {
+    if (startNew && Session.canPurchase) {
+        LaunchedEffect(Unit) { viewModel.startForm() }
+        LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshFormIfChanged() }
+        if (viewModel.isFormLoading) {
             LoadingBox()
             return
         }
         NewPurchaseScreen(
             viewModel = viewModel,
             presetFactoryId = presetFactoryId,
-            onBack = { if (startNew) onClose() else showNewPurchase = false },
-            onSaved = { purchase, failed ->
-                showNewPurchase = false
-                when {
-                    failed > 0 -> onOpenBill(purchase.ID)
-                    startNew -> onClose()
-                }
-            },
+            onBack = onClose,
+            onAddProductFromScan = onAddProductFromScan,
+            onSaved = { purchase, failed -> if (failed > 0) onSavedOpenBill(purchase.ID) else onClose() },
         )
         return
     }
 
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.startList() }
+    val list = viewModel.list
     Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
         floatingActionButton = {
             if (Session.canPurchase) {
-                FloatingActionButton(onClick = { showNewPurchase = true }) {
+                FloatingActionButton(onClick = onNewPurchase) {
                     Icon(Icons.Default.Add, contentDescription = "New purchase")
                 }
             }
         },
     ) { padding ->
-        when {
-            viewModel.isLoading -> LoadingBox(modifier = Modifier.padding(padding))
-            viewModel.errorMessage != null && viewModel.purchases.isEmpty() ->
-                ErrorBox(viewModel.errorMessage!!, onRetry = viewModel::load, modifier = Modifier.padding(padding))
-            viewModel.purchases.isEmpty() ->
-                Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    Text("No purchases yet.")
-                }
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(viewModel.purchases, key = { it.ID }) { purchase ->
-                    PurchaseRow(purchase, onClick = { onOpenBill(purchase.ID) })
-                }
-            }
-        }
+        PagedListContent(
+            list = list,
+            padding = padding,
+            summary = "${countLabel(list.totalCount, "bill")} · ${money(list.totalAmount)}",
+            emptyText = when {
+                list.query.isNotBlank() -> "No purchases match \"${list.query.trim()}\"."
+                Session.canPurchase -> "No purchases ${list.filter.phrase}. Tap + to add one."
+                else -> "No purchases ${list.filter.phrase}."
+            },
+            key = { it.ID },
+            searchPlaceholder = "Search bill, invoice or ${Terms.SUPPLIER.lowercase()}",
+        ) { purchase -> PurchaseRow(purchase, onClick = { onOpenBill(purchase.ID) }) }
     }
 }
 
@@ -133,15 +140,15 @@ private fun PurchaseRow(purchase: Purchase, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(purchase.BillNumber, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    listOfNotNull(purchase.FactoryName, purchase.InvoiceNo).joinToString(" · "),
+                    listOfNotNull(purchase.FactoryName, purchase.InvoiceNo?.takeIf { it.isNotBlank() }, displayDate(purchase.PurchaseDate)).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("₹${purchase.TotalAmount}", style = MaterialTheme.typography.bodyMedium)
+                Text(money(purchase.TotalAmount), style = MaterialTheme.typography.bodyMedium)
                 Text(
                     purchase.Status,
                     color = if (purchase.Status == "CANCELLED") MaterialTheme.colorScheme.error else successColor(),
@@ -157,11 +164,13 @@ private fun NewPurchaseScreen(
     viewModel: PurchasesViewModel,
     presetFactoryId: Int?,
     onBack: () -> Unit,
+    onAddProductFromScan: ((String) -> Unit)?,
     onSaved: (Purchase, Int) -> Unit,
 ) {
     val factories = viewModel.factories
     val products = viewModel.products
-    var selectedFactory by remember { mutableStateOf<Factory?>(factories.find { it.ID == presetFactoryId } ?: factories.firstOrNull()) }
+    // No default supplier unless one was passed in, so a bill can't land on the wrong one unnoticed.
+    var selectedFactory by remember { mutableStateOf<Factory?>(factories.find { it.ID == presetFactoryId }) }
     var invoiceNo by remember { mutableStateOf("") }
     var amountPaid by remember { mutableStateOf("") }
     var nextLineId by remember { mutableLongStateOf(1L) }
@@ -172,14 +181,41 @@ private fun NewPurchaseScreen(
         lineItems = lineItems.map { if (it.id == id) transform(it) else it }
     }
 
+    // Buying prices vary per purchase, so a chip or a scan adds the item with the price left
+    // blank for the user to fill in from the supplier's invoice.
+    fun addProduct(product: Product) {
+        lineItems = lineItems.withQuickItem(product, "") { nextLineId++ }
+    }
+
+    // Cycle 5 barcode scanning: a matching SKU adds the item like a quick-item chip.
+    val scan = rememberBillScanner(
+        products = products,
+        onAdd = ::addProduct,
+        onAddProduct = onAddProductFromScan.takeIf { Session.isCompanyAdmin },
+    )
+
     val total = lineItems.sumOf { (it.quantity.toDoubleOrNull() ?: 0.0) * (it.unitPrice.toDoubleOrNull() ?: 0.0) }
+    val paidValue = amountPaid.toDoubleOrNull()
+    val overpaid = paidValue != null && paidValue > total + 0.005
+    val blocker = when {
+        selectedFactory == null -> "Choose a ${Terms.SUPPLIER.lowercase()}"
+        lineItems.any { it.product == null } -> "Choose a product on every item row"
+        !lineItems.all { it.isValid } -> "Enter a quantity and buying price for every item"
+        overpaid -> "Amount paid can't be more than the bill total"
+        else -> null
+    }
+    val isDirty = lineItems.any { it.product != null } || amountPaid.isNotBlank() || invoiceNo.isNotBlank() || photos.isNotEmpty()
+    var confirmDiscard by remember { mutableStateOf(false) }
+    val requestBack = { if (isDirty) confirmDiscard = true else onBack() }
+    BackHandler(enabled = !viewModel.isSubmitting) { requestBack() }
+    if (confirmDiscard) DiscardDialog(onDiscard = { confirmDiscard = false; onBack() }, onKeep = { confirmDiscard = false })
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("New purchase") },
                 navigationIcon = {
-                    IconButton(onClick = onBack, enabled = !viewModel.isSubmitting) {
+                    IconButton(onClick = requestBack, enabled = !viewModel.isSubmitting) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -191,11 +227,12 @@ private fun NewPurchaseScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                DropdownField(
+                SearchablePickerField(
                     label = Terms.SUPPLIER,
                     options = factories,
                     selected = selectedFactory,
                     optionLabel = { it.Name },
+                    optionDetail = { listOfNotNull(it.ContactPerson?.takeIf(String::isNotBlank), it.PrimaryPhone).joinToString(" · ") },
                     onSelect = { selectedFactory = it },
                 )
             }
@@ -216,11 +253,7 @@ private fun NewPurchaseScreen(
                 QuickItemsStrip(
                     title = "Most used",
                     items = viewModel.frequentItems,
-                    onPick = { item ->
-                        products.find { it.ID == item.id }?.let { product ->
-                            lineItems = lineItems.withQuickItem(product, "") { nextLineId++ }
-                        }
-                    },
+                    onPick = { item -> products.find { it.ID == item.id }?.let(::addProduct) },
                 )
             }
 
@@ -241,6 +274,7 @@ private fun NewPurchaseScreen(
             item {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     TextButton(onClick = { lineItems = lineItems + BillLine(nextLineId++, null, "", "") }) { Text("+ Add item") }
+                    ScanButton(onClick = scan)
                     Spacer(modifier = Modifier.weight(1f))
                     Text("Total ${money(total)}", style = MaterialTheme.typography.titleMedium)
                 }
@@ -250,8 +284,17 @@ private fun NewPurchaseScreen(
                 OutlinedTextField(
                     value = amountPaid,
                     onValueChange = { amountPaid = it },
-                    label = { Text("Amount paid") },
+                    label = { Text("Amount paid now") },
+                    prefix = { Text("₹") },
                     singleLine = true,
+                    isError = overpaid,
+                    supportingText = {
+                        val due = total - (paidValue ?: 0.0)
+                        Text(if (overpaid) "More than the bill total" else "Added to what you owe the ${Terms.SUPPLIER.lowercase()}: ${money(due.coerceAtLeast(0.0))}")
+                    },
+                    trailingIcon = {
+                        if (total > 0) TextButton(onClick = { amountPaid = String.format(java.util.Locale.US, "%.2f", total) }) { Text("Full") }
+                    },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -262,8 +305,14 @@ private fun NewPurchaseScreen(
             item { InlineError(viewModel.errorMessage) }
 
             item {
+                if (blocker != null && !viewModel.isSubmitting) {
+                    Text(blocker, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            item {
                 Button(
-                    enabled = !viewModel.isSubmitting && selectedFactory != null && lineItems.all { it.isValid },
+                    enabled = !viewModel.isSubmitting && blocker == null,
                     onClick = {
                         viewModel.createPurchase(
                             PurchaseInput(
@@ -288,7 +337,7 @@ private fun NewPurchaseScreen(
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Text("  ${viewModel.progressMessage ?: "Saving…"}")
                     } else {
-                        Text("Create purchase")
+                        Text("Create purchase · ${money(total)}")
                     }
                 }
             }
@@ -310,11 +359,12 @@ private fun PurchaseLineItemRow(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                DropdownField(
+                SearchablePickerField(
                     label = "Product",
                     options = products,
                     selected = line.product,
                     optionLabel = { it.Name },
+                    optionDetail = { productDetail(it) },
                     onSelect = onProductChange,
                     modifier = Modifier.weight(1f),
                 )

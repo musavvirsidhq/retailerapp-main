@@ -16,6 +16,8 @@ class DashboardViewModel : ViewModel() {
         private set
     var isLoading by mutableStateOf(true)
         private set
+    var isRefreshing by mutableStateOf(false)
+        private set
     var errorMessage by mutableStateOf<String?>(null)
         private set
 
@@ -27,8 +29,9 @@ class DashboardViewModel : ViewModel() {
         private set
 
     /** Called on every resume, so numbers are fresh after a quick action. Only the first load shows a spinner. */
-    fun load() {
+    fun load(pull: Boolean = false) {
         viewModelScope.launch {
+            if (pull) isRefreshing = true
             isLoading = data == null
             errorMessage = null
             coroutineScope {
@@ -46,6 +49,7 @@ class DashboardViewModel : ViewModel() {
                 }
             }
             isLoading = false
+            isRefreshing = false
         }
     }
 }

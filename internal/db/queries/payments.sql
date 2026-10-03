@@ -25,3 +25,21 @@ SELECT
     - COALESCE((SELECT SUM(pu.amount_paid) FROM purchases pu WHERE pu.factory_id = $1 AND pu.company_id = $2 AND pu.status = 'COMPLETED'), 0)
     - COALESCE((SELECT SUM(pay.amount) FROM payments pay WHERE pay.party_type = 'factory' AND pay.party_id = $1 AND pay.company_id = $2), 0)
   )::numeric(12,2) AS balance;
+
+-- name: ListPaymentsFiltered :many
+-- Cycle 5 list filters: ?from=&to= (payment_date), ?party_type=shop|factory, ?limit=&offset=.
+SELECT * FROM payments
+WHERE company_id = sqlc.arg(company_id)
+  AND (sqlc.narg(from_date)::date IS NULL OR payment_date >= sqlc.narg(from_date)::date)
+  AND (sqlc.narg(to_date)::date IS NULL OR payment_date <= sqlc.narg(to_date)::date)
+  AND (sqlc.narg(party_type)::text IS NULL OR party_type = sqlc.narg(party_type)::text)
+ORDER BY payment_date DESC, id DESC
+LIMIT sqlc.narg(row_limit)::int OFFSET sqlc.arg(row_offset)::int;
+
+-- name: PaymentsFilteredTotals :one
+SELECT COUNT(*)::int AS total_count, COALESCE(SUM(amount), 0)::numeric(12,2) AS total_amount
+FROM payments
+WHERE company_id = sqlc.arg(company_id)
+  AND (sqlc.narg(from_date)::date IS NULL OR payment_date >= sqlc.narg(from_date)::date)
+  AND (sqlc.narg(to_date)::date IS NULL OR payment_date <= sqlc.narg(to_date)::date)
+  AND (sqlc.narg(party_type)::text IS NULL OR party_type = sqlc.narg(party_type)::text);

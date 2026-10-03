@@ -13,26 +13,41 @@ import com.retailapp.android.data.model.PurchaseInput
 import com.retailapp.android.data.model.QuickItem
 import com.retailapp.android.data.remote.AttachmentEntity
 import com.retailapp.android.data.remote.NetworkModule
+import com.retailapp.android.ui.common.DataChanges
+import com.retailapp.android.ui.common.PagedList
 import com.retailapp.android.ui.common.PendingUploads
 import com.retailapp.android.ui.common.PhotoUploader
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
+/** Backs both the purchases list and the new-purchase form, like SalesViewModel. */
 class PurchasesViewModel : ViewModel() {
     private val purchaseApi = NetworkModule.purchaseApi
     private val factoryApi = NetworkModule.factoryApi
     private val productApi = NetworkModule.productApi
 
-    var purchases by mutableStateOf<List<Purchase>>(emptyList())
-        private set
+    /** Cycle 5: date chips, search by bill/invoice number or supplier, 50 at a time. */
+    val list = PagedList(
+        scope = viewModelScope,
+        key = Purchase::ID,
+        dateOf = Purchase::PurchaseDate,
+        amountOf = { if (it.Status == "CANCELLED") 0.0 else it.TotalAmount.toDoubleOrNull() ?: 0.0 },
+        matches = { purchase, q ->
+            purchase.BillNumber.lowercase().contains(q) || purchase.FactoryName.lowercase().contains(q) ||
+                purchase.InvoiceNo?.lowercase()?.contains(q) == true
+        },
+    ) { from, to, q, limit, offset ->
+        NetworkModule.safeCallWithHeaders { purchaseApi.listPurchases(from, to, q, limit, offset) }
+    }
+
     var factories by mutableStateOf<List<Factory>>(emptyList())
         private set
     var products by mutableStateOf<List<Product>>(emptyList())
         private set
     var frequentItems by mutableStateOf<List<QuickItem>>(emptyList())
         private set
-    var isLoading by mutableStateOf(true)
+    var isFormLoading by mutableStateOf(true)
         private set
     var errorMessage by mutableStateOf<String?>(null)
         private set
@@ -41,26 +56,42 @@ class PurchasesViewModel : ViewModel() {
     var progressMessage by mutableStateOf<String?>(null)
         private set
 
-    init {
-        load()
+    private var listStarted = false
+    private var formStarted = false
+    private var formSeenVersion = -1
+
+    fun startList() {
+        if (listStarted) list.refreshIfChanged() else {
+            listStarted = true
+            list.reload()
+        }
     }
 
-    fun load() {
+    fun startForm() {
+        if (formStarted) return
+        formStarted = true
+        loadForm()
+    }
+
+    /** Re-fetches pickers if something changed meanwhile, e.g. a product added from the scanner's "Add product". */
+    fun refreshFormIfChanged() {
+        if (formStarted && !isSubmitting && formSeenVersion != DataChanges.version) loadForm(showSpinner = false)
+    }
+
+    private fun loadForm(showSpinner: Boolean = true) {
+        formSeenVersion = DataChanges.version
         viewModelScope.launch {
-            isLoading = true
-            errorMessage = null
+            if (showSpinner) isFormLoading = true
             coroutineScope {
-                val purchasesDeferred = async { NetworkModule.safeCall { purchaseApi.listPurchases() } }
                 val factoriesDeferred = async { NetworkModule.safeCall { factoryApi.listFactories() } }
                 val productsDeferred = async { NetworkModule.safeCall { productApi.listProducts() } }
                 val frequentDeferred = async { NetworkModule.safeCall { productApi.frequentItems("purchase") } }
-
-                purchasesDeferred.await().onSuccess { purchases = it }.onFailure { errorMessage = it.message }
-                factoriesDeferred.await().onSuccess { factories = it }
-                productsDeferred.await().onSuccess { products = it }
+                // Archived suppliers/products can't go on a new bill (Cycle 5 section 3.3 rule 3).
+                factoriesDeferred.await().onSuccess { factories = it.filter { f -> !f.isArchived } }.onFailure { errorMessage = it.message }
+                productsDeferred.await().onSuccess { products = it.filter { p -> !p.isArchived } }.onFailure { errorMessage = it.message }
                 frequentDeferred.await().onSuccess { frequentItems = it }
             }
-            isLoading = false
+            isFormLoading = false
         }
     }
 
@@ -70,7 +101,8 @@ class PurchasesViewModel : ViewModel() {
             errorMessage = null
             NetworkModule.safeCall { purchaseApi.createPurchase(input) }
                 .onSuccess { purchase ->
-                    purchases = listOf(purchase) + purchases
+                    DataChanges.bump()
+                    formSeenVersion = DataChanges.version
                     val failed = PhotoUploader.upload(AttachmentEntity.PURCHASE, purchase.ID, photos) { done, total ->
                         progressMessage = if (done < total) "Uploading photo ${done + 1} of $total…" else null
                     }

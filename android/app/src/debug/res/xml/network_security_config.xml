@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds only: the test backend (retailapp.debugBaseUrl in app/build.gradle.kts) is still
+  plain HTTP at a bare IP. Release builds use src/main's HTTPS-only config instead.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">13.215.157.19</domain>
+    </domain-config>
+</network-security-config>

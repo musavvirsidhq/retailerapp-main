@@ -40,6 +40,38 @@ type purchaseInput struct {
 
 func (h *PurchaseHandler) List(w http.ResponseWriter, r *http.Request) {
 	companyID, _ := appMiddleware.CompanyIDFromContext(r.Context())
+	f, err := parseListFilters(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Cycle 5 filters/paging, as SaleHandler.List; no params = the full list as before.
+	if f.Any {
+		ctx := r.Context()
+		rows, err := h.Queries.ListPurchasesFiltered(ctx, db.ListPurchasesFilteredParams{
+			CompanyID: companyID, FromDate: f.From, ToDate: f.To, Q: f.Q, RowLimit: f.Limit, RowOffset: f.Offset,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if f.Limit.Valid {
+			totals, err := h.Queries.PurchasesFilteredTotals(ctx, db.PurchasesFilteredTotalsParams{
+				CompanyID: companyID, FromDate: f.From, ToDate: f.To, Q: f.Q,
+			})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeListTotals(w, totals.TotalCount, totals.TotalAmount)
+		}
+		if rows == nil {
+			rows = []db.ListPurchasesFilteredRow{}
+		}
+		writeJSON(w, rows)
+		return
+	}
+
 	purchases, err := h.Queries.ListPurchases(r.Context(), companyID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -98,6 +130,17 @@ func (h *PurchaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	qtx := h.Queries.WithTx(tx)
 
+	// The supplier must belong to this company and not be archived (Cycle 5 section 3.3 rule 3).
+	factory, err := qtx.GetFactory(ctx, db.GetFactoryParams{ID: in.FactoryID, CompanyID: companyID})
+	if err != nil {
+		http.Error(w, "supplier not found", http.StatusBadRequest)
+		return
+	}
+	if factory.ArchivedAt.Valid {
+		http.Error(w, "supplier "+factory.Name+" is archived; restore them before billing", http.StatusBadRequest)
+		return
+	}
+
 	billNumber, err := qtx.NextBillNumber(ctx, db.NextBillNumberParams{CompanyID: companyID, BillType: "PURCHASE"})
 	if err != nil {
 		http.Error(w, "failed to allocate bill number: "+err.Error(), http.StatusInternalServerError)
@@ -122,6 +165,11 @@ func (h *PurchaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		product, err := qtx.GetProduct(ctx, db.GetProductParams{ID: item.ProductID, CompanyID: companyID})
 		if err != nil {
 			http.Error(w, "product not found", http.StatusBadRequest)
+			return
+		}
+		// Archived products can't go on a new bill (Cycle 5 section 3.3 rule 3).
+		if product.ArchivedAt.Valid {
+			http.Error(w, "product "+product.Name+" is archived; restore it before billing", http.StatusBadRequest)
 			return
 		}
 

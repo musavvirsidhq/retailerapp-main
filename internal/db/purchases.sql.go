@@ -324,3 +324,116 @@ func (q *Queries) ListPurchases(ctx context.Context, companyID int32) ([]ListPur
 	}
 	return items, nil
 }
+
+const listPurchasesFiltered = `-- name: ListPurchasesFiltered :many
+SELECT p.id, p.company_id, p.bill_number, p.factory_id, f.name AS factory_name, p.invoice_no, p.purchase_date,
+       p.total_amount, p.amount_paid, p.status, p.created_at
+FROM purchases p
+JOIN factories f ON f.id = p.factory_id
+WHERE p.company_id = $1
+  AND ($2::date IS NULL OR p.purchase_date >= $2::date)
+  AND ($3::date IS NULL OR p.purchase_date <= $3::date)
+  AND ($4::text IS NULL OR p.bill_number ILIKE '%' || $4::text || '%'
+       OR f.name ILIKE '%' || $4::text || '%' OR p.invoice_no ILIKE '%' || $4::text || '%')
+ORDER BY p.purchase_date DESC, p.id DESC
+LIMIT $6::int OFFSET $5::int
+`
+
+type ListPurchasesFilteredParams struct {
+	CompanyID int32
+	FromDate  pgtype.Date
+	ToDate    pgtype.Date
+	Q         pgtype.Text
+	RowOffset int32
+	RowLimit  pgtype.Int4
+}
+
+type ListPurchasesFilteredRow struct {
+	ID           int32
+	CompanyID    int32
+	BillNumber   string
+	FactoryID    int32
+	FactoryName  string
+	InvoiceNo    pgtype.Text
+	PurchaseDate pgtype.Date
+	TotalAmount  pgtype.Numeric
+	AmountPaid   pgtype.Numeric
+	Status       string
+	CreatedAt    pgtype.Timestamptz
+}
+
+// Cycle 5 list filters, as ListSalesFiltered; ?q= also matches the supplier's invoice number.
+func (q *Queries) ListPurchasesFiltered(ctx context.Context, arg ListPurchasesFilteredParams) ([]ListPurchasesFilteredRow, error) {
+	rows, err := q.db.Query(ctx, listPurchasesFiltered,
+		arg.CompanyID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.Q,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPurchasesFilteredRow
+	for rows.Next() {
+		var i ListPurchasesFilteredRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.BillNumber,
+			&i.FactoryID,
+			&i.FactoryName,
+			&i.InvoiceNo,
+			&i.PurchaseDate,
+			&i.TotalAmount,
+			&i.AmountPaid,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const purchasesFilteredTotals = `-- name: PurchasesFilteredTotals :one
+SELECT COUNT(*)::int AS total_count,
+       COALESCE(SUM(p.total_amount) FILTER (WHERE p.status = 'COMPLETED'), 0)::numeric(12,2) AS total_amount
+FROM purchases p
+JOIN factories f ON f.id = p.factory_id
+WHERE p.company_id = $1
+  AND ($2::date IS NULL OR p.purchase_date >= $2::date)
+  AND ($3::date IS NULL OR p.purchase_date <= $3::date)
+  AND ($4::text IS NULL OR p.bill_number ILIKE '%' || $4::text || '%'
+       OR f.name ILIKE '%' || $4::text || '%' OR p.invoice_no ILIKE '%' || $4::text || '%')
+`
+
+type PurchasesFilteredTotalsParams struct {
+	CompanyID int32
+	FromDate  pgtype.Date
+	ToDate    pgtype.Date
+	Q         pgtype.Text
+}
+
+type PurchasesFilteredTotalsRow struct {
+	TotalCount  int32
+	TotalAmount pgtype.Numeric
+}
+
+func (q *Queries) PurchasesFilteredTotals(ctx context.Context, arg PurchasesFilteredTotalsParams) (PurchasesFilteredTotalsRow, error) {
+	row := q.db.QueryRow(ctx, purchasesFilteredTotals,
+		arg.CompanyID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.Q,
+	)
+	var i PurchasesFilteredTotalsRow
+	err := row.Scan(&i.TotalCount, &i.TotalAmount)
+	return i, err
+}

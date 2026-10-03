@@ -46,3 +46,23 @@ upload key — Google then re-signs your app for distribution with its own key, 
 upload key only has to authenticate you to the Console. If you ever lose the upload key,
 Google has an account-recovery process to reset it; you are not permanently locked out
 the way you would be under legacy (non-Play-App-Signing) signing.
+
+## Backend address (Cycle 5: HTTPS only)
+
+Release builds refuse to build until the HTTPS API address is set, so a release APK can never
+talk plain HTTP to the backend. Put it in `android/gradle.properties`:
+
+```properties
+retailapp.releaseBaseUrl=https://api.your-domain.example/
+```
+
+(or pass `-Pretailapp.releaseBaseUrl=...` on the command line). It must start with `https://`
+and end with `/`. Debug builds keep using the plain-HTTP test server (`retailapp.debugBaseUrl`,
+default `http://13.215.157.19/`), which only `src/debug/res/xml/network_security_config.xml`
+allows. Release builds also turn HTTP logging off.
+
+## Toolchain
+
+The project builds with the JDK bundled in current Android Studio (JDK 25): Gradle 9.8,
+Android Gradle Plugin 9.3 (which compiles Kotlin itself - there is no separate kotlin-android
+plugin) and Kotlin 2.4, compileSdk 37, targetSdk 35.
